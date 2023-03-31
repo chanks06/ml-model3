@@ -31,7 +31,6 @@ options(scipen=999)
 
 
 ```{r}
-
 raw_income = read_csv('datasets/openml_1590.csv', na=c("?"))
 
 income = read_csv("datasets/openml_1590.csv", na=c("?")) %>%
@@ -110,6 +109,10 @@ income = income %>% mutate(l_capital_gain = log(`capital-gain`),
 #moving these cols back to front of dummy cols: 
 income = income %>% relocate(l_capital_gain, l_capital_loss)
 
+#converting -Inf to 0 in capital gains and losses: 
+income = income %>% mutate(l_capital_gain = ifelse(l_capital_gain == '-Inf', 0, l_capital_gain),
+                  l_capital_loss = ifelse(l_capital_loss == '-Inf', 0, l_capital_loss))
+
 #I can't deal with these hyphens: 
 income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
                 rename_all(funs(tolower(.)))
@@ -148,8 +151,61 @@ raw_income %>% group_by(sex, relationship) %>% count()
 
 
 ```
+# Principal Component Analysis on income dataset
 
 ```{r}
-income
+pr_income = prcomp(x = select(income,-income_above_50k), scale = T, center = T)
+summary(pr_income)
+#it takes 37 PCA features to explain 50% of the variation in the data. 
+```
+
+```{r}
+screeplot(pr_income, type = "lines")
+#elbow is around pc5
+```
+Factor loadings: 
+
+```{r}
+pr_income$rotation
+
+#PC1 : works longer hours, less private work, older
+#PC2 : lower education level, less local government, more private work, younger
+#PC3 : older, less private sector (not very meaningfu predictor) 
+#PC4 : younger, more educated 
+#PC5 : ...
+#PC6 : public workers 
+#PC7 : work long hours in private sector 
+#PC8 : low fnlwgt...not quite sure how to interpret this variable yet. less private sector work 
+
+#the min/max seems to be around abs(+/-.2)
+
+```
+```{r}
+rownames_to_column(as.data.frame(pr_income$rotation)) %>% 
+  select(1:6) %>% 
+    filter(abs(PC1) >= 0.2 | abs(PC2) >= 0.2 | abs(PC3) >= 0.2 | abs(PC4) >= 0.2 | abs(PC5) >= 0.2)
+
+# PC1 : married men 
+# PC2 : uneducated 
+# PC3 : pacific islander immigrants 
+# PC4 : young, single folk 
+# PC5 : white latinx immigrants 
+
+```
+```{r}
+prc = bind_cols(select(income, income_above_50k), as.data.frame(pr_income$x)) %>%
+  select(1:6) %>%
+    rename("married_men" = PC1, "uneducated" = PC2, "pac_isl_immigrants" = PC3, "young_single"= PC4, "latinx_immigrants" = PC5)
+
+
+
+prc %>%
+pivot_longer(cols = -income_above_50k, names_to = "component", values_to = "loading") %>% mutate(income_above_50k = as.factor(income_above_50k)) %>%
+ggplot(aes(loading, fill=income_above_50k)) +
+geom_density(alpha = 0.5) +
+facet_grid(.~component)
+
+#principal compoenents "married_men" and "uneducated" - given this plot maybe my "uneducated" label is incorrect. 
+
 ```
 
