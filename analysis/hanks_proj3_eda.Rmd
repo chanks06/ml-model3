@@ -189,13 +189,13 @@ rownames_to_column(as.data.frame(pr_income$rotation)) %>%
 # PC2 : uneducated 
 # PC3 : pacific islander immigrants 
 # PC4 : young, single folk 
-# PC5 : white latinx immigrants 
+# PC5 : mexican immigrants 
 
 ```
 ```{r}
 prc = bind_cols(select(income, income_above_50k), as.data.frame(pr_income$x)) %>%
   select(1:6) %>%
-    rename("married_men" = PC1, "uneducated" = PC2, "pac_isl_immigrants" = PC3, "young_single"= PC4, "latinx_immigrants" = PC5)
+    rename("married_men" = PC1, "uneducated" = PC2, "pac_isl_immigrants" = PC3, "young_single"= PC4, "mexican_immigrants" = PC5)
 
 
 
@@ -206,6 +206,35 @@ geom_density(alpha = 0.5) +
 facet_grid(.~component)
 
 #principal compoenents "married_men" and "uneducated" - given this plot maybe my "uneducated" label is incorrect. 
+
+#PC1 and PC4 are good predictors of income_above_50k, but not the rest. 
+
+```
+
+Making a model using only  5 PCs: 
+
+```{r}
+prc = prc %>% mutate(income_above_50k = ifelse(income_above_50k == TRUE, "y", "n"))
+
+prc = prc %>% mutate(income_above_50k = as.factor(income_above_50k))
+
+
+ctrl <- trainControl(method = "cv", number = 3, classProbs = TRUE)
+
+prc_index <- createDataPartition(prc$income_above_50k, p = 0.80, list = FALSE)
+train <- prc[prc_index, ]
+test <- prc[-prc_index, ]
+
+model.pca =train(income_above_50k ~ .,
+             data = train, 
+             method = "rf",
+             metric = "ROC",
+             trControl = ctrl)
+
+importance = varImp(model.pca)
+
+plot(importance)
+#pc1 "married_men" is the most predictive of class 
 
 ```
 
