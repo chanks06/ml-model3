@@ -12,23 +12,29 @@ output:
 ---
 
 
-
-
-
 ## Setup
 ```{r setup, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_knit$set(root.dir = '/Users/charleshanks/repos/ml-model3') 
+
 library(tidyverse)
 library(tidytext)
 library(caret)
 library(fastDummies)
 library(randomForest)
+library(RCurl)
 # https://www.openml.org/d/1590
 
+#preventing scientific notation for numerical outputs
 options(scipen=999)
-raw_income = read_csv("openml_1590.csv", na=c("?"))
+```
 
-income = read_csv("openml_1590.csv", na=c("?")) %>%
+
+```{r}
+
+raw_income = read_csv('datasets/openml_1590.csv', na=c("?"))
+
+income = read_csv("datasets/openml_1590.csv", na=c("?")) %>%
   drop_na() %>%
   mutate(income_above_50k = class==">50K") %>%
   select(-class) %>%
@@ -141,5 +147,9 @@ raw_income %>% group_by(sex, relationship) %>% count()
 #there is 1 female husband, look like this dataset does not take into account the difference between gender and sex
 
 
+```
+
+```{r}
+income
 ```
 
