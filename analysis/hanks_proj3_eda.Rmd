@@ -247,15 +247,19 @@ income %>% group_by(work_over40, income_above_50k) %>% count() %>% ggplot(aes(x 
 
 
 ```{r}
-income
+age_bin_dummies = income %>% select(age_bin) %>% 
+    dummy_cols(remove_selected_columns = T)
+
+income.2 = bind_cols(income,age_bin_dummies) %>% select(-age_bin)
 ```
 
 # Principal Component Analysis on income dataset
 
 ```{r}
-pr_income = prcomp(x = select(income,-income_above_50k), scale = T, center = T)
+pr_income = prcomp(x = select(income.2,-income_above_50k), scale = T, center = T)
+
 summary(pr_income)
-#it takes 37 PCA features to explain 50% of the variation in the data. 
+#it takes 38 PCA features to explain 50% of the variation in the data. 
 ```
 
 ```{r}
@@ -277,27 +281,39 @@ pr_income$rotation
 #PC8 : low fnlwgt...not quite sure how to interpret this variable yet. less private sector work 
 #the min/max seems to be around abs(+/-.2)
 ```
+
+filtering principal component with threshold of highest impact 
+
 ```{r}
 rownames_to_column(as.data.frame(pr_income$rotation)) %>% 
   select(1:6) %>% 
-    filter(abs(PC1) >= 0.2 | abs(PC2) >= 0.2 | abs(PC3) >= 0.2 | abs(PC4) >= 0.2 | abs(PC5) >= 0.2)
-# PC1 : married men 
-# PC2 : uneducated 
-# PC3 : pacific islander immigrants 
-# PC4 : young, single folk 
-# PC5 : mexican immigrants 
+    filter(abs(PC1) >= 0.3 | abs(PC2) >= 0.3 | abs(PC3) >= 0.3 | abs(PC4) >= 0.3 | abs(PC5) >= 0.3)
+
 ```
 ```{r}
-prc = bind_cols(select(income, income_above_50k), as.data.frame(pr_income$x)) %>%
+prc = bind_cols(select(income.2, income_above_50k), as.data.frame(pr_income$x)) %>%
   select(1:6) %>%
-    rename("married_men" = PC1, "uneducated" = PC2, "pac_isl_immigrants" = PC3, "young_single"= PC4, "mexican_immigrants" = PC5)
+    rename("married_men" = PC1, "uneducated" = PC2, "usborn_educated" = PC3, "usborn_white"= PC4, "nonwhite_less_work" = PC5)
+
 prc %>%
 pivot_longer(cols = -income_above_50k, names_to = "component", values_to = "loading") %>% mutate(income_above_50k = as.factor(income_above_50k)) %>%
 ggplot(aes(loading, fill=income_above_50k)) +
 geom_density(alpha = 0.5) +
 facet_grid(.~component)
-#principal compoenents "married_men" and "uneducated" - given this plot maybe my "uneducated" label is incorrect. 
-#PC1 and PC4 are good predictors of income_above_50k, but not the rest. 
+
+#principal compoenents "married_men" (PC1) and "uneducated" (PC4) are best predictors of income_above_50k, but not the rest. If I had to choose one one to carry with me it would be married_men (PC1) to include in a model. 
+
+
+```
+married_men vs. uneducated principal components
+```{r}
+prc %>%
+select(income_above_50k, married_men, uneducated) %>%
+pivot_longer(cols = -income_above_50k,names_to = "component",values_to = "loading") %>%
+ggplot(aes(loading, fill=income_above_50k))+
+geom_density(alpha=0.5)+
+facet_grid(.~component)
+
 ```
 
 Making a model using only  5 PCs: 
@@ -305,16 +321,37 @@ Making a model using only  5 PCs:
 ```{r}
 prc = prc %>% mutate(income_above_50k = ifelse(income_above_50k == TRUE, "y", "n"))
 prc = prc %>% mutate(income_above_50k = as.factor(income_above_50k))
+
 ctrl <- trainControl(method = "cv", number = 3, classProbs = TRUE)
+
 prc_index <- createDataPartition(prc$income_above_50k, p = 0.80, list = FALSE)
 train <- prc[prc_index, ]
 test <- prc[-prc_index, ]
+
 model.pca =train(income_above_50k ~ .,
              data = train, 
              method = "rf",
              metric = "ROC",
              trControl = ctrl)
+
 importance = varImp(model.pca)
 plot(importance)
-#pc1 "married_men" is the most predictive of class 
+
+#var imp plot confirms that pc1 "married_men" is the most predictive of class
+
 ```
+
+# K-MEANS clustering 
+
+
+```{r}
+income.2.no.Y = income.2 %>% select(-income_above_50k)
+income.2.no.Y = na.omit(income.2.no.Y)
+
+kclust = kmeans(income.2.no.Y, centers = 5)
+
+?kmeans()
+
+?na_omit()
+```
+
