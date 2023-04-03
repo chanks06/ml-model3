@@ -12,34 +12,34 @@ output:
 ---
 
 
+
+
+
 ## Setup
 ```{r setup, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
-knitr::opts_knit$set(root.dir = '/Users/charleshanks/repos/ml-model3') 
-
 library(tidyverse)
 library(tidytext)
 library(caret)
 library(fastDummies)
 library(randomForest)
-library(RCurl)
 # https://www.openml.org/d/1590
 
-#preventing scientific notation for numerical outputs
 options(scipen=999)
-```
+raw_income = read_csv("openml_1590.csv", na=c("?"))
 
-
-```{r}
-raw_income = read_csv('datasets/openml_1590.csv', na=c("?"))
-
-income = read_csv("datasets/openml_1590.csv", na=c("?")) %>%
+income = read_csv("openml_1590.csv", na=c("?")) %>%
   drop_na() %>%
   mutate(income_above_50k = class==">50K") %>%
   select(-class) %>%
   dummy_cols(remove_selected_columns = T)
 
-View(income)
+#formatting col names: 
+raw_income = raw_income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
+                rename_all(funs(tolower(.)))
+
+income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
+                rename_all(funs(tolower(.)))
 ```
 
 ## Some questions about the data
@@ -98,25 +98,32 @@ Please be prepared to
 library(skimr)
 skim(income)
 
-ggplot(income, aes(x = `capital-loss`)) + geom_histogram()
+
+```
+
+# Transforming capital gain and capital loss: 
+```{r}
+ggplot(income, aes(x = capital_loss)) + geom_histogram()
 #I should log capital-gain and capital-loss
 #definition: capital gain refers to the increase in the value of a capital asset when it is sold. A capital gain occurs when you sell an asset for more than what you originally paid for it. 
 
-income = income %>% mutate(l_capital_gain = log(`capital-gain`), 
-                  l_capital_loss = log(`capital-loss`)) %>% 
-                        select(-`capital-gain`,-`capital-loss`)
+income = income %>% mutate(l_capital_gain = log(capital_gain), 
+                  l_capital_loss = log(capital_loss)) %>% 
+                        select(-capital_gain,-capital_loss)
 
 #moving these cols back to front of dummy cols: 
 income = income %>% relocate(l_capital_gain, l_capital_loss)
 
-#converting -Inf to 0 in capital gains and losses: 
-income = income %>% mutate(l_capital_gain = ifelse(l_capital_gain == '-Inf', 0, l_capital_gain),
-                  l_capital_loss = ifelse(l_capital_loss == '-Inf', 0, l_capital_loss))
+#center and scaling capital_gain and capital_loss: 
+#income = income %>% select(capital_gain, capital_loss) %>% preProcess(method = c("center", "scale")) %>% predict(income) 
 
-#I can't deal with these hyphens: 
-income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
-                rename_all(funs(tolower(.)))
 
+#changing -Inf back to 0 for log transformed vars: 
+income = income %>% mutate(l_capital_gain = ifelse(l_capital_gain == -Inf, 0, l_capital_gain),
+                  l_capital_loss = ifelse(l_capital_loss == -Inf, 0, l_capital_loss))
+
+#Now checking out shape of log transformed data: 
+ggplot(income, aes(x = l_capital_loss)) + geom_histogram() + xlim(6,12)
 ```
 
 # Exploratory Data Analysis 
@@ -124,6 +131,9 @@ income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>%
 ```{r}
 #what is education_num? 
 #is NA retired? Unemployed? 
+
+
+#looking at age vs. occupation: 
 raw_income %>% ggplot(aes(x = age, fill = occupation)) + geom_histogram() + facet_wrap(~occupation)
 #military is a younger person's occupation 
 #exec-manegerial is very normally distributed 
@@ -135,22 +145,111 @@ raw_income %>%
   group_by(occupation,sex) %>% 
           count() %>% 
           ggplot(aes(x = occupation, y = n, fill = sex)) + geom_col() + coord_flip()
+
+#craft-repair, farming/fishing, executive mostly male, admin mostly female 
+#there are some ethical considerations to unpack here in building this model...
+
 ```
 
 ```{r}
 raw_income %>% group_by(education, workclass) %>% count() %>% ggplot(aes(x = n, y = education, fill = workclass)) + geom_col()
 ```
-How about age vs. relationship? 
+Examining distribution by sex: 
 ```{r}
 raw_income %>% group_by(relationship) %>% summarize(avg_age= mean(age))
-raw_income %>% group_by(sex) %>% count()
+
+n_sex = raw_income %>% 
+  group_by(sex) %>% 
+    count()
+
+n_sex %>%
+    ggplot(aes(x = sex, y = n, fill = sex)) + geom_col()
 #there are twice as many men in this dataset....may need to downsample by gender later in the game. This may lead to implicit bias toward men making more than 50k in the model. 
 
-raw_income %>% group_by(sex, relationship) %>% count()
+raw_income %>% group_by(sex, class) %>% count() %>% mutate(prop = n/nrow(raw_income))
 #there is 1 female husband, look like this dataset does not take into account the difference between gender and sex
+#yikes, only 3.6 % of this dataset includes women who make more than 50k! 
+
+```
+# Age 
+
+```{r}
+income
+
+ggplot(income, aes(x = income_above_50k, y = age, fill = income_above_50k)) + geom_boxplot()
+
+income %>% group_by(income_above_50k) %>% summarize(med_age = median(age), avg_age = mean(age))
+
+ggplot(income, aes(x = age)) + geom_histogram(binwidth = 10)
+
+income = income %>% mutate(age_bin = 
+                    case_when( 
+                      age < 20 ~ "teen", 
+                      age >=20 & age <30 ~ "20-29",
+                      age >=30 & age <40 ~ "30-39", 
+                      age >=40 & age <50 ~ "40-50",
+                      age >=50 & age <66 ~ "50-65",
+                      age >=65  ~ "65+")
+                                          ) %>% 
+                                    relocate(age_bin) %>% 
+                                          relocate(l_capital_gain, l_capital_loss)
+
+income$age_bin = factor(income$age_bin, levels = c("teen", "20-29","30-39","40-50","50-65","65+"))
+
+#distribution of people by age bin
+ggplot(income, aes(x = age_bin, fill = age_bin)) + geom_histogram(stat= 'count')
+
+ggplot(income, aes(x = age_bin)) + geom_histogram(stat = 'count',aes(fill = income_above_50k)) + facet_wrap(~income_above_50k)
+#People in their forties are most likely to be making above 50k. 
+
+```
+Is there a correlation between education level and income over 50k ? 
+```{r}
+raw_income %>% ggplot(aes(x = class, y = fnlwgt)) + geom_col()
+
+raw_income = raw_income %>% mutate(above_50k = ifelse(class == '<=50K',0,1))
+
+cor.test(raw_income$`education-num`,raw_income$above_50k)
+
+# correlation coeffcient is .33, not super strong.
+```
+What countries are represented in this dataset? 
+
+```{r}
+unique(raw_income$native_country)
+
+#how many of each country? 
+
+raw_income %>% group_by(native_country) %>% count() %>% arrange(desc(n)) %>% mutate(prop = n/nrow(raw_income))
+#almost 90% are native citizen of USA, about 10 % have immigrate in their life time. 
+#1.7 % do not have a native country listed. 
+
+#I'm guessing that if you're white, male and from USA, there is a higher probability of making > 50k....
 
 
 ```
+
+Is there a correlation between # of hours worked per week and income over 50k ? 
+
+```{r}
+cor.test(raw_income$hours_per_week, raw_income$above_50k)
+#.22 correlation coef 
+
+income = income %>% mutate(work_over40 = ifelse(hours_per_week > 40,1,0)) %>% relocate(work_over40) %>% relocate(l_capital_gain:hours_per_week)
+
+#graph that 
+
+income %>% group_by(work_over40, income_above_50k) %>% count() %>% ggplot(aes(x = work_over40, y = n, fill = income_above_50k)) + geom_col()
+
+#answer: there are almost the same amount of folks who do / don't work over 40 hours who have income over 50k. However, the proportion of people who make over 50k and work over 40 is 40% that subgroup, compared to 18% of people who do make over 50 k and do not work over 40 hours per week. 
+
+```
+
+
+```{r}
+income
+```
+
 # Principal Component Analysis on income dataset
 
 ```{r}
@@ -163,11 +262,11 @@ summary(pr_income)
 screeplot(pr_income, type = "lines")
 #elbow is around pc5
 ```
+
 Factor loadings: 
 
 ```{r}
 pr_income$rotation
-
 #PC1 : works longer hours, less private work, older
 #PC2 : lower education level, less local government, more private work, younger
 #PC3 : older, less private sector (not very meaningfu predictor) 
@@ -176,65 +275,46 @@ pr_income$rotation
 #PC6 : public workers 
 #PC7 : work long hours in private sector 
 #PC8 : low fnlwgt...not quite sure how to interpret this variable yet. less private sector work 
-
 #the min/max seems to be around abs(+/-.2)
-
 ```
 ```{r}
 rownames_to_column(as.data.frame(pr_income$rotation)) %>% 
   select(1:6) %>% 
     filter(abs(PC1) >= 0.2 | abs(PC2) >= 0.2 | abs(PC3) >= 0.2 | abs(PC4) >= 0.2 | abs(PC5) >= 0.2)
-
 # PC1 : married men 
 # PC2 : uneducated 
 # PC3 : pacific islander immigrants 
 # PC4 : young, single folk 
 # PC5 : mexican immigrants 
-
 ```
 ```{r}
 prc = bind_cols(select(income, income_above_50k), as.data.frame(pr_income$x)) %>%
   select(1:6) %>%
     rename("married_men" = PC1, "uneducated" = PC2, "pac_isl_immigrants" = PC3, "young_single"= PC4, "mexican_immigrants" = PC5)
-
-
-
 prc %>%
 pivot_longer(cols = -income_above_50k, names_to = "component", values_to = "loading") %>% mutate(income_above_50k = as.factor(income_above_50k)) %>%
 ggplot(aes(loading, fill=income_above_50k)) +
 geom_density(alpha = 0.5) +
 facet_grid(.~component)
-
 #principal compoenents "married_men" and "uneducated" - given this plot maybe my "uneducated" label is incorrect. 
-
 #PC1 and PC4 are good predictors of income_above_50k, but not the rest. 
-
 ```
 
 Making a model using only  5 PCs: 
 
 ```{r}
 prc = prc %>% mutate(income_above_50k = ifelse(income_above_50k == TRUE, "y", "n"))
-
 prc = prc %>% mutate(income_above_50k = as.factor(income_above_50k))
-
-
 ctrl <- trainControl(method = "cv", number = 3, classProbs = TRUE)
-
 prc_index <- createDataPartition(prc$income_above_50k, p = 0.80, list = FALSE)
 train <- prc[prc_index, ]
 test <- prc[-prc_index, ]
-
 model.pca =train(income_above_50k ~ .,
              data = train, 
              method = "rf",
              metric = "ROC",
              trControl = ctrl)
-
 importance = varImp(model.pca)
-
 plot(importance)
 #pc1 "married_men" is the most predictive of class 
-
 ```
-
