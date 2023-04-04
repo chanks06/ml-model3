@@ -1,0 +1,96 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+```{r}
+acc = read_csv('accident.csv')  
+veh = read_csv('vehicle.csv')
+per = read_csv('person.csv')
+dru = read_csv('drugs.csv')
+
+```
+
+```{r}
+acc %>% group_by(DRUNK_DR) %>% count()
+unique(acc$DRUNK_DR)
+
+
+acc %>% left_join(veh, by = "")
+```
+
+```{r}
+#intersting in the people driving the vehicle that crashed
+drivers = per %>% filter(PER_TYP == 1)
+```
+
+```{r}
+nrow(acc)
+
+acc_drivers = acc %>% left_join(drivers, by = 'ST_CASE')
+
+acc_drivers %>% select(DRUNK_DR, DRINKING)
+
+acc_drivers %>% filter(MAK_MOD == 7482)
+```
+```{r}
+names(acc)
+names(drivers)
+
+#finding repeat cols in both datasets
+names(drivers) %in% names(acc)
+
+#these cols are not in accidents.csv 
+drivers[,5:7]
+drivers[,27:126]
+
+
+distinct_driver_cols = bind_cols(drivers[,5:7],drivers[,27:126])
+
+#this is now the driver ds without distinct features to add to accidents
+drivers2 = bind_cols(drivers[,3], distinct_driver_cols)
+
+#dataset now to refine for model
+drivers3 = acc %>% left_join(drivers2, by = "ST_CASE")
+
+```
+
+```{r}
+#removing the "__NAME" categorical vars" 
+drivers3 = drivers3 %>% select(-ends_with('name', ignore.case = TRUE))
+
+drivers3 = drivers3 %>% rename_all(funs(tolower(.)))
+
+#creating class to predict 
+drivers3 = drivers3 %>% mutate(class = ifelse(drunk_dr > 0, 1,0)) %>% relocate(class)
+
+#columsn to convert to factor: 
+drivers3 = drivers3 %>% select(class, state, st_case, ve_total:persons,county:route,tway_id,rur_urb,func_sys:sp_jur,harm_ev:sch_bus,fatals,str_veh,make:rollover,impact1:air_bag,ejection:extricat,drugs:drug_det,dstatus,hospital:lag_hrs,lag_mins:gvwr_to)
+
+#testing lapply to convert first 3 cols to factor
+drivers3[names(drivers3)[1:3]] = lapply(drivers3[names(drivers3)[1:3]], factor)
+
+# do it again!
+drivers3[names(drivers3)[11:20]] = lapply(drivers3[names(drivers3)[11:20]], factor)
+
+drivers3[names(drivers3)[21:38]] = lapply(drivers3[names(drivers3)[21:38]], factor)
+
+drivers3[names(drivers3)[40:85]] = lapply(drivers3[names(drivers3)[40:85]], factor)
+
+#this is nasty - not best practice for converting these cols, revisit and do this in more clean fashion
+```
+
+why hispanic col? Not treating ethnicity here as a contributing factor
+```{r}
+drivers3 = drivers3 %>% select(-hispanic)
+
+drivers3 = drivers3 %>% relocate(fatals) %>% relocate (class,st_case)
+```
+
+Lot of factors here, this is going to be a lot of dummy cols....
+```{r}
+drivers3 %>% select(-class) %>% dummy_cols(remove_selected_columns = T)
+```
+
