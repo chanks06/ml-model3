@@ -3,7 +3,19 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+```{r setup}
+knitr::opts_knit$set(root.dir = '/Users/charleshanks/desktop/msds/spring_23/ml/FARS2020NationalCSV')
+```
+
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(caret)
+library(fastDummies)
+library(randomForest)
+```
+
 
 ```{r}
 acc = read_csv('accident.csv')  
@@ -13,28 +25,12 @@ dru = read_csv('drugs.csv')
 
 ```
 
-```{r}
-acc %>% group_by(DRUNK_DR) %>% count()
-unique(acc$DRUNK_DR)
-
-
-acc %>% left_join(veh, by = "")
-```
 
 ```{r}
 #intersting in the people driving the vehicle that crashed
 drivers = per %>% filter(PER_TYP == 1)
 ```
 
-```{r}
-nrow(acc)
-
-acc_drivers = acc %>% left_join(drivers, by = 'ST_CASE')
-
-acc_drivers %>% select(DRUNK_DR, DRINKING)
-
-acc_drivers %>% filter(MAK_MOD == 7482)
-```
 ```{r}
 names(acc)
 names(drivers)
@@ -72,25 +68,70 @@ drivers3 = drivers3 %>% select(class, state, st_case, ve_total:persons,county:ro
 #testing lapply to convert first 3 cols to factor
 drivers3[names(drivers3)[1:3]] = lapply(drivers3[names(drivers3)[1:3]], factor)
 
+drivers3 = drivers3 %>% select(-year,-nhs,-tway_id,-milept,-reljct1,-reljct2,-rel_road)
+
+drivers3 = drivers3 %>% select(-body_typ,-mod_year,-tow_veh,-spec_use,-emer_use,-per_typ,-inj_sev,-seat_pos,-hospital,-death_mo,death_yr,-death_hr,-death_mn,-death_tm,-lag_hrs,-lag_mins,-work_inj,-hispanic,-vpicmake,-vpicmodel,-vpicbodyclass,-icfinalbody,-gvwr_from,-gvwr_to)
+
 # do it again!
-drivers3[names(drivers3)[11:20]] = lapply(drivers3[names(drivers3)[11:20]], factor)
+drivers3[names(drivers3)[40:50]] = lapply(drivers3[names(drivers3)[40:50]], factor)
 
-drivers3[names(drivers3)[21:38]] = lapply(drivers3[names(drivers3)[21:38]], factor)
+#drivers3[names(drivers3)[21:38]] = lapply(drivers3[names(drivers3)[21:38]], factor)
 
-drivers3[names(drivers3)[40:85]] = lapply(drivers3[names(drivers3)[40:85]], factor)
+#drivers3[names(drivers3)[40:85]] = lapply(drivers3[names(drivers3)[40:85]], factor)
 
 #this is nasty - not best practice for converting these cols, revisit and do this in more clean fashion
+
+drivers3 = drivers3 %>% select(-(death_da:helm_mis))
 ```
 
-why hispanic col? Not treating ethnicity here as a contributing factor
-```{r}
-drivers3 = drivers3 %>% select(-hispanic)
-
-drivers3 = drivers3 %>% relocate(fatals) %>% relocate (class,st_case)
-```
 
 Lot of factors here, this is going to be a lot of dummy cols....
 ```{r}
-drivers3 %>% select(-class) %>% dummy_cols(remove_selected_columns = T)
+
+drivers3 = drivers3 %>% select(-county)
+
+drivers3 = drivers3 %>% select(-mak_mod)
+```
+```{r}
+d3_cols = names(drivers3) 
+
+drivers4 = drivers3 %>% select(-class) %>% 
+  dummy_cols(remove_selected_columns = T) %>% 
+     cbind(drivers3 %>% 
+          select(class)) %>% 
+                relocate(class)
+```
+
+Principal Component Analysis: 
+
+```{r}
+drivers4[names(drivers4)[18:355]] = lapply(drivers4[names(drivers4)[18:355]], factor)
+
+drivers4 = drivers4 %>% mutate(class = ifelse(class == 1,0,1))
+
+drivers5 = drivers4 %>% select(fatals:age) %>% preProcess(method = c("center", "scale")) %>% predict(drivers4) %>% na.omit()
+
+#income = income %>% select(capital_gain, capital_loss) %>% preProcess(method = c("center", "scale")) %>% predict(income) 
+
+is.infinite(drivers5)
+any(sapply(drivers5, function(x) any(is.infinite(x))))
+
+drivers5[names(drivers5[18:355])] = lapply(drivers5[names(drivers5)[18:355]], as.numeric)
+
+pr_driver = prcomp(x = select(drivers5, -class), center = F, scale = F)
+
+summary(pr_driver)
+
+#for some reason cumulative proportion is not displaying in my summary of pca. Here is a workaround: 
+
+vars <- apply(pr_driver$x, 2, var)  
+props <- vars / sum(vars)
+cumsum(props)
+```
+
+```{r}
+screeplot(pr_driver, type = "lines")
+#something isn't right here.... 
+
 ```
 
