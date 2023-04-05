@@ -1,0 +1,27 @@
+---
+title: "Predicting Presence of Alcohol in Fatal Vehicle Incidents"
+output: pdf_document
+date: "2023-04-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = '/Users/charleshanks/desktop/msds/spring_23/ml/FARS2020NationalCSV')
+```
+
+This data comes from the National Highway Traffic Safety Administration (NHTSA). We going to build a model to predict if alcohol played a factor in fatal vehicle incidents in 2020. This type of model could be used to find patterns in types of crashes, and to make changes to certain roads or intersection areas where alcohol-related vehicular manslaughter are prevalent.
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(caret)
+library(fastDummies)
+library(randomForest)
+
+acc = read_csv('accident.csv')  
+veh = read_csv('vehicle.csv')
+per = read_csv('person.csv')
+dru = read_csv('drugs.csv')
+```
+
+## 

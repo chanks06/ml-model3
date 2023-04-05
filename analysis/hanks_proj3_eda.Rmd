@@ -18,6 +18,9 @@ output:
 ## Setup
 ```{r setup, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_knit$set(root.dir = '/Users/charleshanks/repos/ml-model3/datasets')
+
+
 library(tidyverse)
 library(tidytext)
 library(caret)
@@ -26,6 +29,12 @@ library(randomForest)
 # https://www.openml.org/d/1590
 
 options(scipen=999)
+
+
+```
+
+```{r}
+getwd()
 raw_income = read_csv("openml_1590.csv", na=c("?"))
 
 income = read_csv("openml_1590.csv", na=c("?")) %>%

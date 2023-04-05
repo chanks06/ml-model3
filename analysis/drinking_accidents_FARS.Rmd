@@ -42,7 +42,6 @@ names(drivers) %in% names(acc)
 drivers[,5:7]
 drivers[,27:126]
 
-
 distinct_driver_cols = bind_cols(drivers[,5:7],drivers[,27:126])
 
 #this is now the driver ds without distinct features to add to accidents
@@ -51,6 +50,12 @@ drivers2 = bind_cols(drivers[,3], distinct_driver_cols)
 #dataset now to refine for model
 drivers3 = acc %>% left_join(drivers2, by = "ST_CASE")
 
+drivers3 %>% group_by(DRUNK_DR) %>% count()
+
+getwd()
+deadly_drivers = write_rds(drivers3)
+
+write_rds(drivers3, file = "/Users/charleshanks/Desktop/MSDS/SPRING_23/ML/FARS_ds")
 ```
 
 ```{r}
