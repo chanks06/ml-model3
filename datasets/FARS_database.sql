@@ -146,7 +146,8 @@ create table acc2 (
     WRK_ZONENAME text,
     LGT_CONDNAME text,
     WEATHERNAME text,
-    FATALS text); 
+    FATALS text,
+    DRUNK_DR text); 
 
 insert into acc2 (
     select  st_case ,
@@ -159,7 +160,8 @@ insert into acc2 (
     WRK_ZONENAME ,
     LGT_CONDNAME ,
     WEATHERNAME ,
-    FATALS FROM accidents);
+    FATALS, 
+    DRUNK_DR FROM accidents);
 
 create table veh2 (
     st_case text, 
@@ -198,3 +200,14 @@ insert into veh2 (
 select drinking, drinkingname from vehicles; 
 
 /* note that there are more vehicles than drivers...perhaps some drivers got away but their vehicles stayed put */
+
+
+select drunk_dr, count(*) from accidents
+group by drunk_dr; 
+
+drop table accidents; 
+drop table vehicles;
+drop table persons;
+
+alter table acc2 rename to accidents; 
+alter table veh2 rename to vehicles; 
