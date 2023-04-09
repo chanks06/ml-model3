@@ -192,6 +192,7 @@ Checking back to see our breakdown of class:
 ```{r}
 ds.clean %>% group_by(was_drinking) %>% count() %>% mutate(prop = n/nrow(ds.clean))
 
+
 colnames(ds.clean)
 
 ds.clean = ds.clean %>% rename(num_vehicles = veh_no...41, impact = impact1name...43)
@@ -209,14 +210,82 @@ ds.clean = ds.clean %>% relocate(fatals:num_vehicles,latitude,longitud, dr_hgt:p
 ```
 
 ```{r}
-saveRDS(ds.clean, file = '/Users/charleshanks/repos/ml-model3/datasets/drivers-clean.rds')
+saveRDS(ds.clean, file = '/Users/charleshanks/repos/ml-model3/datasets/drivers_clean.rds')
 ```
 
 Okay, I think we are now good to go. 
 
+```{r}
+ds.clean %>% group_by(was_drinking) %>% count()
+```
+
+## Principal Component Analysis 
+
+Preparing dataset for PCA: all columns must be numeric 
+```{r}
+ds.clean = ds.clean %>% relocate(ve_forms,day, hour,age ) %>% relocate(was_drinking)
+
+dummies = ds.clean %>% select(statename:acc_typename) %>% dummy_cols(remove_selected_columns = T)
+
+ds_dummied = bind_cols(ds.clean %>% select(was_drinking:prev_oth), dummies)
+
+dsd_no_y = ds_dummied %>% select(-was_drinking)
+
+dsd_no_7 = as.data.frame(lapply(dsd_no_y,as.numeric))
+
+ds_dummied = cbind(ds_dummied['was_drinking'], dsd_no_7)
+```
+
+prcomp()
+```{r}
+pr_ds = prcomp(x = select(ds_dummied, -was_drinking), scale = T, center = T)
+
+#i'm getting an error that there is a column with zero variance, there must be a col that has a constant value: 
+
+#finding the columns that only have 1 value
+const_list = list()
+for (i in colnames(ds_dummied)) 
+{  
+    if (nrow(unique(ds_dummied[i])) == 1)
+    {  
+      const_list = append(const_list,names(ds_dummied[i]))
+    }
+}
+
+#removing these columns from dataset
+
+for (i in 1:length(const_list))
+{
+  ds_dummied = ds_dummied %>% select(-const_list[[i]])
+}
+
+ncol(ds_dummied)
+
+#checking if those columns are there:
+ds_dummied['rur_urbname_Not.Reported']#nope
+ds_dummied[const_list[[2]]] #nope 
+          
+#mission accomplished! Now let's see if prcomp works now....         
+```
+
+```{r}
+pr_ds = prcomp(x = select(ds_dummied, -was_drinking), scale = T, center = T)
+
+summary(pr_ds)
+#for some reason summary(pr_ds) is not displaying cumulative proportion
+#here is my workaround (<https://stackoverflow.com/questions/23866765/getting-cumulative-proportion-in-pca>)
+
+eggs = apply(pr_ds$x, 2, function(x) var(x))  
+props <- eggs / sum(eggs)
+cumsum(props)
+
+#it takes 121 principle components to account for 50% of the variation of the data. 
 
 
 
+```{r}
+screeplot(pr_ds, type = "lines")
+```
 
 
 
