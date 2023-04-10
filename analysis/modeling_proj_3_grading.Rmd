@@ -25,16 +25,17 @@ library(fastDummies)
 library(randomForest)
 # https://www.openml.org/d/1590
 
-raw_income = read_csv("../resources/openml_1590.csv", na=c("?"))
+raw_income = read_csv("https://raw.githubusercontent.com/chanks06/ml-model3/main/datasets/openml_1590.csv", na=c("?"))
 
-income = read_csv("../resources/openml_1590.csv", na=c("?")) %>%
+income = read_csv("https://raw.githubusercontent.com/chanks06/ml-model3/main/datasets/openml_1590.csv", na=c("?")) %>%
   drop_na() %>%
   mutate(income_above_50k = class==">50K") %>%
   select(-class) %>%
   dummy_cols(remove_selected_columns = T)
 
-View(income)
 ```
+
+
 
 ## Some questions about the data
 
