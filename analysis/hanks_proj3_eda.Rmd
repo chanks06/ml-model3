@@ -369,7 +369,7 @@ fit.pca5 = train(income_above_50k ~ .,
 
 
 ```
-The addition of other 4 components did not significance increase performance of logistic regression. This confirms that we bring along PC1 as we build our predictive model. 
+The addition of other 4 components did not significantly increase performance of logistic regression. This confirms that we bring along only PC1 as we build our predictive model. 
 
 
 
