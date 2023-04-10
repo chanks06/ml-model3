@@ -11,10 +11,6 @@ output:
     df_print: paged
 ---
 
-
-
-
-
 ## Setup
 ```{r setup, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
@@ -29,12 +25,9 @@ library(randomForest)
 # https://www.openml.org/d/1590
 
 options(scipen=999)
-
-
 ```
 
 ```{r}
-getwd()
 raw_income = read_csv("openml_1590.csv", na=c("?"))
 
 income = read_csv("openml_1590.csv", na=c("?")) %>%
@@ -50,6 +43,7 @@ raw_income = raw_income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>%
 income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
                 rename_all(funs(tolower(.)))
 ```
+
 
 ## Some questions about the data
 
@@ -105,15 +99,15 @@ Please be prepared to
 
 ```{r}
 library(skimr)
-skim(income)
-
-
+skim(raw_income)
 ```
 
-# Transforming capital gain and capital loss: 
+# Log Transforming capital gain and capital loss: 
+
+"You have a capital gain if you sell the asset for more than your adjusted basis. You have a capital loss if you sell the asset for less than your adjusted basis." <https://www.irs.gov/taxtopics/tc409#:~:text=You%20have%20a%20capital%20gain,%2C%20aren't%20tax%20deductible.>
+
 ```{r}
 ggplot(income, aes(x = capital_loss)) + geom_histogram()
-#I should log capital-gain and capital-loss
 #definition: capital gain refers to the increase in the value of a capital asset when it is sold. A capital gain occurs when you sell an asset for more than what you originally paid for it. 
 
 income = income %>% mutate(l_capital_gain = log(capital_gain), 
@@ -123,16 +117,13 @@ income = income %>% mutate(l_capital_gain = log(capital_gain),
 #moving these cols back to front of dummy cols: 
 income = income %>% relocate(l_capital_gain, l_capital_loss)
 
-#center and scaling capital_gain and capital_loss: 
-#income = income %>% select(capital_gain, capital_loss) %>% preProcess(method = c("center", "scale")) %>% predict(income) 
-
-
 #changing -Inf back to 0 for log transformed vars: 
 income = income %>% mutate(l_capital_gain = ifelse(l_capital_gain == -Inf, 0, l_capital_gain),
                   l_capital_loss = ifelse(l_capital_loss == -Inf, 0, l_capital_loss))
 
 #Now checking out shape of log transformed data: 
-ggplot(income, aes(x = l_capital_loss)) + geom_histogram() + xlim(6,12)
+ggplot(income, aes(x = l_capital_gain)) + geom_histogram() + xlim(0,12)
+ggplot(income, aes(x = l_capital_loss)) + geom_histogram() + xlim(0,12)
 ```
 
 # Exploratory Data Analysis 
@@ -140,7 +131,6 @@ ggplot(income, aes(x = l_capital_loss)) + geom_histogram() + xlim(6,12)
 ```{r}
 #what is education_num? 
 #is NA retired? Unemployed? 
-
 
 #looking at age vs. occupation: 
 raw_income %>% ggplot(aes(x = age, fill = occupation)) + geom_histogram() + facet_wrap(~occupation)
@@ -159,6 +149,7 @@ raw_income %>%
 #there are some ethical considerations to unpack here in building this model...
 
 ```
+education and type of work: 
 
 ```{r}
 raw_income %>% group_by(education, workclass) %>% count() %>% ggplot(aes(x = n, y = education, fill = workclass)) + geom_col()
@@ -177,14 +168,12 @@ n_sex %>%
 
 raw_income %>% group_by(sex, class) %>% count() %>% mutate(prop = n/nrow(raw_income))
 #there is 1 female husband, look like this dataset does not take into account the difference between gender and sex
-#yikes, only 3.6 % of this dataset includes women who make more than 50k! 
+#Only 3.6 % of this dataset includes women who make more than 50k. 
 
 ```
 # Age 
 
 ```{r}
-income
-
 ggplot(income, aes(x = income_above_50k, y = age, fill = income_above_50k)) + geom_boxplot()
 
 income %>% group_by(income_above_50k) %>% summarize(med_age = median(age), avg_age = mean(age))
@@ -207,6 +196,7 @@ income$age_bin = factor(income$age_bin, levels = c("teen", "20-29","30-39","40-5
 
 #distribution of people by age bin
 ggplot(income, aes(x = age_bin, fill = age_bin)) + geom_histogram(stat= 'count')
+#the largest age group in this dataset is 30-39
 
 ggplot(income, aes(x = age_bin)) + geom_histogram(stat = 'count',aes(fill = income_above_50k)) + facet_wrap(~income_above_50k)
 #People in their forties are most likely to be making above 50k. 
@@ -259,108 +249,128 @@ income %>% group_by(work_over40, income_above_50k) %>% count() %>% ggplot(aes(x 
 age_bin_dummies = income %>% select(age_bin) %>% 
     dummy_cols(remove_selected_columns = T)
 
-income.2 = bind_cols(income,age_bin_dummies) %>% select(-age_bin)
+income = bind_cols(income,age_bin_dummies) %>% select(-age_bin)
 ```
 
 # Principal Component Analysis on income dataset
 
+We will apply Principal Component Analysis to our dataset in order to reduce the number of features needed to explain the variation in the data. We reduce the number of dimensions in our feature space through a linear combination of features that share co-variance. This process is based on a calculation of distances within the feature space. Is is therefore essential that we scale and center our numerical data. 
+Instead of having to manually assess correlation among variables, we call the prcomp() function on our dataset to group our variables together.  
+
+The result is that this new combination feature - the 'principal component' - captures the variation in the data according to the variables that it represents. Each principal component does _not_ correlate with another - they are as distinct from one another as possible. If we were to graph these linear combination of features, they would form a right angle extend out from the center of the data's spread.  
+
+In practice, this allows us to use only a handful of principal components to explain how the data behaves. 
+
+## prcomp() on income:
+
+We need 38 principal components to explain half of the variation of the data.
+
 ```{r}
-pr_income = prcomp(x = select(income.2,-income_above_50k), scale = T, center = T)
+pr_income = prcomp(x = select(income,-income_above_50k), scale = T, center = T)
 
 summary(pr_income)
-#it takes 38 PCA features to explain 50% of the variation in the data. 
+pr_income$rotation
 ```
+
+## Visualizing Principle Components 
+
+Looking at at the plot below, we can see a visual ranking of how much of the variation each component captures. Each component is ranked according to its Eigenvalue. The eigenvalue is a measure of the proportion of variance explain by that component. 
+
+The scree plot helps use select a cut off point for determining how we can explain the most with the fewest components as possible. We evaluate the slope of the line connecting the components, and find the point when the absolute value of the slope becomes small, and each component following continues that trend. The 'elbow' in the plot below is at PC5. The components after PC5 do much less for us in accounting for the variance the income dataset. 
 
 ```{r}
 screeplot(pr_income, type = "lines")
 #elbow is around pc5
 ```
+## Interpretation of the Top 5 Principal Components 
 
-Factor loadings: 
+We will look at the factor loadings for each component to determine what each component is telling us about the data. 
+
+We can interpret factor loadings as coefficients of our linear combination for each feature within the principal component. They us the relative (transformed) value of each original feature. For example, a factor loading of -.75 for age would mean that this component contains the observations of younger people.  
 
 ```{r}
 pr_income$rotation
-#PC1 : works longer hours, less private work, older
-#PC2 : lower education level, less local government, more private work, younger
-#PC3 : older, less private sector (not very meaningfu predictor) 
-#PC4 : younger, more educated 
-#PC5 : ...
-#PC6 : public workers 
-#PC7 : work long hours in private sector 
-#PC8 : low fnlwgt...not quite sure how to interpret this variable yet. less private sector work 
-#the min/max seems to be around abs(+/-.2)
 ```
 
-filtering principal component with threshold of highest impact 
+## Component Interpretation 
+
+We want to find the most influential original features within our top 5 PCs. To this we will filter to show only those where at least one of the PCs has a factor loading greater than or equal to the absolute value of 0.30. This gives us the highlights of each component. Here are descriptions of the type of workers these principal components: 
+
+PC1: middle-aged husbands 
+PC2: young men with little formal education
+PC3: young, educated, and single (yo-pros) 
+PC4: white Americans
+PC5: non-white family members who don't work that much 
 
 ```{r}
-rownames_to_column(as.data.frame(pr_income$rotation)) %>% 
-  select(1:6) %>% 
-    filter(abs(PC1) >= 0.3 | abs(PC2) >= 0.3 | abs(PC3) >= 0.3 | abs(PC4) >= 0.3 | abs(PC5) >= 0.3)
+rownames_to_column(as.data.frame(pr_income$rotation)) %>%
+select(1:6) %>%
+filter(abs(PC1) >= 0.25 | abs(PC2) >= 0.25 | abs(PC3) >= 0.25 | abs(PC4) >= 0.25 | abs(PC5) >= 0.25) %>% rename("husbands" = PC1, "low_ed_young_men" = PC2, "yopros" = PC3, "white_americans" = PC4, "non_white_fam_little_work" = PC5)
 
 ```
+
+Let us now determine if these principle components are good predictors of income_above_50k. 
+
 ```{r}
-prc = bind_cols(select(income.2, income_above_50k), as.data.frame(pr_income$x)) %>%
+prc = bind_cols(select(income, income_above_50k), as.data.frame(pr_income$x)) %>%
   select(1:6) %>%
-    rename("married_men" = PC1, "uneducated" = PC2, "usborn_educated" = PC3, "usborn_white"= PC4, "nonwhite_less_work" = PC5)
+    rename("husbands" = PC1, "low_ed_young_men" = PC2, "yopros" = PC3, "white_americans"= PC4, "non_white_fam_little_work" = PC5)
 
 prc %>%
 pivot_longer(cols = -income_above_50k, names_to = "component", values_to = "loading") %>% mutate(income_above_50k = as.factor(income_above_50k)) %>%
 ggplot(aes(loading, fill=income_above_50k)) +
 geom_density(alpha = 0.5) +
 facet_grid(.~component)
-
-#principal compoenents "married_men" (PC1) and "uneducated" (PC4) are best predictors of income_above_50k, but not the rest. If I had to choose one one to carry with me it would be married_men (PC1) to include in a model. 
-
-
-```
-married_men vs. uneducated principal components
-```{r}
-prc %>%
-select(income_above_50k, married_men, uneducated) %>%
-pivot_longer(cols = -income_above_50k,names_to = "component",values_to = "loading") %>%
-ggplot(aes(loading, fill=income_above_50k))+
-geom_density(alpha=0.5)+
-facet_grid(.~component)
-
 ```
 
-Making a model using only  5 PCs: 
+Looking at the density plots above, it is clear that PC1 'husbands' is a good predictor for making over 50k income. The other components do not have enough delineation between the FALSE and TRUE mappings of income_above_50k. Among the other 4 components, there is too much overlap to consider them as good predictors of our reponse variable. We will incorporate PC1 into our classification model. 
+
+How well can you predict income_above_50k using the first 5 or 6 principal components? How about only the first 2?
+
+## Making a classification model using Components  
+
+Let's make PC1 earn its dinner. What if we used only PC1 to predict class using a logistic regression model? 
+
+Given the percentage of white men from America in this dataset, I think it will have a decently high accuracy, but overall low kappa. 
 
 ```{r}
-prc = prc %>% mutate(income_above_50k = ifelse(income_above_50k == TRUE, "y", "n"))
-prc = prc %>% mutate(income_above_50k = as.factor(income_above_50k))
+prc$income_above_50k = factor(ifelse(prc$income_above_50k == 'FALSE', 'no','yes'),levels = c('no','yes'))
+
+prc.pc1 = prc %>% select(income_above_50k, husbands)
 
 ctrl <- trainControl(method = "cv", number = 3, classProbs = TRUE)
 
-prc_index <- createDataPartition(prc$income_above_50k, p = 0.80, list = FALSE)
-train <- prc[prc_index, ]
-test <- prc[-prc_index, ]
+prc.pc1_index <- createDataPartition(prc.pc1$income_above_50k, p = 0.80, list = FALSE)
+train <- prc.pc1[prc.pc1_index, ]
+test <- prc.pc1[-prc.pc1_index, ]
 
-model.pca =train(income_above_50k ~ .,
+fit.pc1 = train(income_above_50k ~ .,
              data = train, 
-             method = "rf",
+             method = "glm",
+             family = "binomial",
+             metric = "ROC",
+             trControl = ctrl)
+```
+fit.pc1's accuracy in training the model was .796, and kappa = .4. That is impressive for just one component. 
+
+Now to include all 5 PCs and retrain model: 
+
+```{r}
+prc_index <- createDataPartition(prc$income_above_50k, p = 0.80, list = FALSE)
+train <- prc[prc.pc1_index, ]
+test <- prc[-prc.pc1_index, ]
+
+fit.pca5 = train(income_above_50k ~ .,
+             data = train, 
+             method = "glm",
+             family = "binomial",
              metric = "ROC",
              trControl = ctrl)
 
-importance = varImp(model.pca)
-plot(importance)
-
-#var imp plot confirms that pc1 "married_men" is the most predictive of class
 
 ```
+The addition of other 4 components did not significance increase performance of logistic regression. This confirms that we bring along PC1 as we build our predictive model. 
 
-# K-MEANS clustering 
 
 
-```{r}
-income.2.no.Y = income.2 %>% select(-income_above_50k)
-income.2.no.Y = na.omit(income.2.no.Y)
-
-kclust = kmeans(income.2.no.Y, centers = 5)
-
-?kmeans()
-
-?na_omit()
-```
 
