@@ -1,0 +1,512 @@
+---
+title: "KMeans"
+author: "Karol Orozco"
+date: "2023-04-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(caret)
+library(fastDummies)
+library(randomForest)
+library(tidymodels)
+library(factoextra)
+library(cluster)
+library(plotly)
+library(skimr)
+
+# https://www.openml.org/d/1590
+
+raw_income = read_csv("https://raw.githubusercontent.com/chanks06/ml-model3/main/datasets/openml_1590.csv", na=c("?"))
+
+income = read_csv("https://raw.githubusercontent.com/chanks06/ml-model3/main/datasets/openml_1590.csv", na=c("?")) %>%
+  drop_na() %>%
+  mutate(income_above_50k = class==">50K") %>%
+  select(-class) %>%
+  dummy_cols(remove_selected_columns = T)
+
+#formatting col names: 
+raw_income = raw_income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
+                rename_all(funs(tolower(.)))
+
+income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
+                rename_all(funs(tolower(.)))
+
+
+```
+
+# INTRODUCTION 
+
+Changing response variable to a factor: 
+```{r}
+income = income %>% mutate(income_above_50k = factor(income_above_50k)) %>% relocate(income_above_50k)
+```
+
+## Log Transforming capital gain and capital loss: 
+
+"You have a capital gain if you sell the asset for more than your adjusted basis. You have a capital loss if you sell the asset for less than your adjusted basis." <https://www.irs.gov/taxtopics/tc409#:~:text=You%20have%20a%20capital%20gain,%2C%20aren't%20tax%20deductible.>
+
+```{r}
+
+ggplot(income, aes(x = capital_loss)) + geom_histogram()
+#definition: capital gain refers to the increase in the value of a capital asset when it is sold. A capital gain occurs when you sell an asset for more than what you originally paid for it. 
+
+income = income %>% mutate(l_capital_gain = log(capital_gain), 
+                  l_capital_loss = log(capital_loss)) %>% 
+                        select(-capital_gain,-capital_loss) %>% relocate(income_above_50k, l_capital_gain, l_capital_loss)
+
+ggplot(income, aes(x = l_capital_loss)) + geom_histogram()
+
+#changing -Inf back to 0 for log transformed vars: 
+income = income %>% mutate(l_capital_gain = ifelse(l_capital_gain == -Inf, 0, l_capital_gain),
+                  l_capital_loss = ifelse(l_capital_loss == -Inf, 0, l_capital_loss))
+
+#Now checking out shape of log transformed data: 
+ggplot(income, aes(x = l_capital_gain)) + geom_histogram() + xlim(5,12)
+ggplot(income, aes(x = l_capital_loss)) + geom_histogram() + xlim(5,12)
+
+income %>% group_by(income_above_50k) %>% summarize(avg_cap_gain = mean(l_capital_gain), avg_cap_loss = mean(l_capital_loss))
+#people making above over 50k will high have greater log capital gain/loss on average  
+```
+
+# PART I Principal Component Analysis on Income Dataset
+
+We will apply Principal Component Analysis to our dataset in order to reduce the number of features needed to explain the variation in the data. We reduce the number of dimensions in our feature space through a linear combination of features that share co-variance. This process is based on a calculation of distances within the feature space. Is is therefore essential that we scale and center our numerical data. 
+
+Instead of having to manually assess correlation among variables, we call the prcomp() function on our dataset to group our variables together.  
+
+The result is that this new combination feature - the 'principal component' - captures the variation in the data according to the variables that it represents. Each principal component does _not_ correlate with another - they are as distinct from one another as possible. If we were to graph these linear combination of features, they would form a right angle extend out from the center of the data's spread.  
+
+In practice, this allows us to use only a handful of principal components to explain how the data behaves. 
+
+```{r}
+pr_income = prcomp(x = select(income,-income_above_50k), scale = T, center = T)
+
+summary(pr_income)
+pr_income$rotation
+
+```
+
+We need *37* principal components to explain half of the variation of the data.
+
+## Visualizing Principle Components' Ability to Explain Variation 
+
+Looking at at the plot below, we can see a visual ranking of how much of the variation each component captures. Each component is ranked according to its Eigenvalue. The eigenvalue is a measure of the proportion of variance explain by that component. 
+
+The scree plot helps us select a cut off point for determining how we can explain the most variation with the fewest components as possible. We evaluate the slope of the line connecting the components, and find the point when the absolute value of the slope becomes small, and each component following continues that trend. The 'elbow' in the plot below is at PC2. The components after PC2 do much less for us in accounting for the variance the income dataset. 
+
+```{r}
+screeplot(pr_income, type = "lines")
+#elbow is around pc5
+```
+
+## Interpretation of the Top 5 Principal Components 
+
+We will look at the factor loadings for each component to determine what each component is telling us about the data. 
+
+We can interpret factor loadings as coefficients of our linear combination for each feature within the principal component. They tell us the relative (transformed) value of each original feature. For example, a factor loading of -.75 for age would mean that this component contains the observations of younger people.  
+
+```{r}
+pr_income$rotation
+```
+
+## Component Interpretation 
+
+We want to find the most influential original features within our top 5 PCs. To this we will filter to show only those where at least one of the PCs has a factor loading greater than or equal to the absolute value of 0.25. This gives us the highlights of each component. Here are descriptions of the type of workers these principal components: 
+
+PC1: middle-aged husbands 
+PC2: young men with little formal education
+PC3: Asian and Pacific Islander 
+PC4: Career-focus males without family 
+PC5: Mexican people
+
+Note: these components are all quite male-dominated. 
+
+```{r}
+rownames_to_column(as.data.frame(pr_income$rotation)) %>%
+select(1:6) %>%
+filter(abs(PC1) >= 0.25 | abs(PC2) >= 0.25 | abs(PC3) >= 0.25 | abs(PC4) >= 0.25 | abs(PC5) >= 0.25) %>% rename("husbands" = PC1, "low_ed_male_laborer" = PC2, "asian_pac_isl" = PC3, "male_yopros" = PC4, "mexican" = PC5)
+
+
+```
+
+
+Let us now determine if these principle components are good predictors of income_above_50k. 
+
+```{r}
+prc = bind_cols(select(income, income_above_50k), as.data.frame(pr_income$x)) %>%
+  select(1:6) %>% 
+filter(abs(PC1) >= 0.25 | abs(PC2) >= 0.25 | abs(PC3) >= 0.25 | abs(PC4) >= 0.25 | abs(PC5) >= 0.25) %>% rename("husbands" = PC1, "low_ed_male_laborer" = PC2, "asian_pac_isl" = PC3, "male_yopros" = PC4, "mexican" = PC5)
+
+prc %>%
+pivot_longer(cols = -income_above_50k, names_to = "component", values_to = "loading") %>% mutate(income_above_50k = as.factor(income_above_50k)) %>%
+ggplot(aes(loading, fill=income_above_50k)) +
+geom_density(alpha = 0.5) +
+facet_grid(.~component)
+```
+
+Based on the density plots above, PC1 'husbands' followed by PC2 'low_ed_male_laborer' seem most predictive of income_above_50k. 
+
+## Making a Logistic Regression Model using PC1 and PC2  
+
+What if we used only PC1 and PC2 to predict class using a logistic regression model? 
+
+```{r}
+prc$income_above_50k = factor(ifelse(prc$income_above_50k == 'TRUE', 'yes','no'),levels = c('yes','no'))
+
+prc.pc1and2 = prc %>% select(income_above_50k, husbands, low_ed_male_laborer)
+
+ctrl <- trainControl(method = "cv", number = 3, classProbs = TRUE, summaryFunction = twoClassSummary)
+
+#splitting our data 
+prc.pc1and2_index <- createDataPartition(prc.pc1and2$income_above_50k, p = 0.80, list = FALSE)
+train <- prc.pc1and2[prc.pc1and2_index, ]
+test <- prc.pc1and2[-prc.pc1and2_index, ]
+
+fit.prc.pc1and2 = train(income_above_50k ~ .,
+             data = train, 
+             method = "glm",
+             family = "binomial",
+             metric = "ROC",
+             trControl = ctrl)
+
+confusionMatrix(predict(fit.prc.pc1and2, test),factor(test$income_above_50k))
+```
+The Specificity (true negative rate) is much higher lower than the Sensitivity (true positive) rate. This makes sense given that there are roughly 3x more '<50k' than '50k' observations in the data. 
+
+```{r}
+income %>% group_by(income_above_50k) %>% count()
+```
+
+What if we add the rest of the principal components to the LR model? 
+
+```{r}
+prc_index <- createDataPartition(prc$income_above_50k, p = 0.80, list = FALSE)
+train <- prc[prc_index, ]
+test <- prc[-prc_index, ]
+
+fit.allpc = train(income_above_50k ~ .,
+             data = train, 
+             method = "glm",
+             family = "binomial",
+             metric = "ROC",
+             trControl = ctrl)
+
+confusionMatrix(predict(fit.allpc, test),factor(test$income_above_50k))
+```
+Not a significance increase in LR model performance. We will bring along PC1 and PC2 as guides for the rest of our journey. 
+
+# PART II: K-means 
+
+Major Assumptions: flnwgt does not include age information
+
+```{r}
+# Drop target column and normalize data
+income_features =  recipe(~ ., data = income) %>%
+ step_rm(income_above_50k) %>%  ## will remove variables based on their name, type, or role
+  step_naomit(everything(), skip = TRUE) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% #converts our factor columns into numeric binary (0 and 1) variables.
+  step_zv(all_numeric(), -all_outcomes()) %>% ## step_zv(): removes any numeric variables that have zero variance.
+
+
+  prep() %>% 
+  bake(new_data = NULL)
+
+# Print out data
+income_features %>% 
+  slice_head(n = 5)
+
+income_features = bind_cols(prc %>% select(2:3), income_features)
+```
+
+## Choosing number of clusters
+
+
+```{r}
+
+set.seed(503)
+
+# Create 10 models with 1 to 10 clusters
+kclusts <- tibble(k = 1:10) %>% 
+  mutate(
+    model = map(k, ~ kmeans(x = income_features, centers = .x, nstart = 20)),
+    glanced = map(model, glance)) %>% 
+  unnest(cols = c(glanced))
+
+# View results
+kclusts
+```
+
+
+```{r}
+# Plot Total within-cluster sum of squares (tot.withinss)
+kclusts %>% 
+  ggplot(mapping = aes(x = k, y = tot.withinss)) +
+  geom_line(size = 1.2, alpha = 0.5, color = "dodgerblue3") +
+  geom_point(size = 2, color = "dodgerblue3")+
+  theme_minimal()
+```
+
+
+## Analysis of cluster centers
+
+```{r}
+set.seed(503)
+# Fit and predict clusters with k = 3
+final_kmeans <- kmeans(income_features, centers =3, nstart = 100, iter.max = 1000)
+
+# Add cluster prediction to the data set
+results <- augment(final_kmeans, income_features)
+
+results %>% 
+  slice_head(n = 5)
+```
+
+
+
+```{r}
+results <- bind_cols(select(income, income_above_50k), as.data.frame(results))
+
+```
+
+## Bivariate chart(s) against meaningful variables and/or analysis of density plots
+
+```{r}
+clust_spc_plot <- results %>% 
+    ggplot(mapping = aes(x = age, y = education_num)) +
+    geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
+
+  scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
+
+
+clust_spc_plot
+# Make plot interactive
+ggplotly(clust_spc_plot)
+
+```
+
+## Meaningful interpretation / discussion of conclusions
+
+
+# PART III    SUPERVISED LEARNING 
+
+Logistic Regression Model to examine log-odds of each feature
+```{r}
+#adding pc1 and pc2 to income ds 
+income = bind_cols(prc %>% select(2:3), income) %>% relocate(income_above_50k)
+
+income_index <- createDataPartition(income$income_above_50k, p = 0.80, list = FALSE)
+train <- income[income_index, ]
+test <- income[-income_index, ]
+
+control <- trainControl(method = "cv", number = 5)
+
+fit.lr <- train(income_above_50k ~ .,
+             data = train, 
+             trControl = control,
+             method = "glm",
+             family = "binomial")
+
+
+odds_ratio = exp(coef(fit.lr$finalModel))
+data.frame(name = names(odds_ratio), odds_ratio = odds_ratio) %>%
+arrange(desc(odds_ratio)) %>%
+head()
+
+view(odds_ratio)
+
+
+```
+
+
+Feature Engineering 
+
+```{r}
+raw_income = raw_income %>% drop_na()
+
+rawr = bind_cols(prc %>% select(2:3), raw_income) %>% relocate(class)
+
+rawr = rawr %>% mutate(l_capital_gain = log(capital_gain), 
+                  l_capital_loss = log(capital_loss), 
+                  class = factor(class)) %>% 
+                        select(-capital_gain,-capital_loss) %>% relocate(class)
+
+
+rawr = rawr %>% mutate(l_capital_gain = ifelse(l_capital_gain == -Inf, 0, l_capital_gain),
+                  l_capital_loss = ifelse(l_capital_loss == -Inf, 0, l_capital_loss))
+
+rawr %>% mutate(age_bin = (case_when( 
+                      age < 20 ~ "teen", 
+                      age >=20 & age <30 ~ "20-29",
+                      age >=30 & age <40 ~ "30-39", 
+                      age >=40 & age <50 ~ "40-50",
+                      age >=50 & age <66 ~ "50-65",
+                      age >=65  ~ "65+")))
+
+rawr = rawr %>% mutate(overtime = ifelse(hours_per_week > 40, 1, 0))
+```
+
+## TidyModel 
+
+```{r}
+library(themis)
+data_split <- initial_split(rawr, prop = 3/4)
+id_train <- training(data_split)
+id_test  <- testing(data_split)
+
+basic_rec <- 
+  recipe(class ~ ., data = id_train) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_normalize(all_predictors()) %>% 
+  themis::step_upsample(class) 
+
+xgb_spec <- 
+   boost_tree(tree_depth = tune(), learn_rate = tune(), loss_reduction = tune(), 
+              min_n = tune(), sample_size = tune(), trees = tune()) %>% 
+   set_engine("xgboost") %>% 
+   set_mode("classification")
+
+workflow = workflow()
+
+flow_state = workflow_set(preproc = list(basic = basic_rec), 
+                          models = list(xgb = xgb_spec))
+
+
+bill_folds = vfold_cv(id_train, v = 3)
+
+grid_ctrl = 
+  control_grid(save_pred = TRUE, 
+               parallel_over = "everything", 
+               save_workflow = TRUE
+  )
+
+grid_results <-
+   flow_state %>%
+   workflow_map(
+      seed = 503,
+      resamples = bill_folds,
+      grid = 2,
+      control = grid_ctrl
+   )
+
+grid_results %>% 
+   rank_results() %>% 
+        filter(.metric == 'roc_auc')
+
+
+
+```
+
+random forest to determine variable importance: 
+
+```{r}
+rawr
+ctrl <- trainControl(method = "cv", number = 2, classProbs=TRUE, summaryFunction = twoClassSummary)
+
+rawr = rawr %>% mutate(income_above_50k = ifelse(class == '>50K', 'yes','no' )) %>% select(-class) %>% relocate(income_above_50k)
+
+rawr_index <- createDataPartition(rawr$income_above_50k, p = 0.80, list = FALSE)
+train <- rawr[ rawr_index, ]
+test <- rawr[-rawr_index, ]
+
+
+rawr.rf =train(income_above_50k ~ .,
+             data = train, 
+             method = "rf",
+             tuneGrid = expand.grid(mtry = 6), 
+             metric = "ROC",
+             trControl = ctrl)
+
+importance = varImp(rawr.rf)
+
+view(importance)
+
+#native_county does not matter 
+#race 
+
+
+colnames(rawr)
+```
+do we have outliers ? 
+```{r}
+library(dbscan)
+lof <- lof(income %>% select(-income_above_50k), minPts = 100)
+
+?lof()
+summary(lof)
+hist(lof, breaks = 10, main = "LOF (minPts = 10)")
+
+plot(sort(lof), type = "l",  main = "LOF (minPts = 10)",
+  xlab = "Points sorted by LOF", ylab = "LOF")
+
+
+
+lof %>% filter()
+
+new_money = bind_cols(income, lof) %>% relocate(...108) %>% rename(lof = ...108) %>% arrange(desc(lof)) %>% filter(lof <= 1.1)
+
+lapply(new_money %>% select(-lof,-income_above_50k), scale(.x, center = TRUE, scale = TRUE)) 
+
+nm = as.data.frame(scale(new_money %>% select(-lof,-income_above_50k), center = TRUE, scale = TRUE))
+
+
+
+```
+
+```{r}
+money_features =  recipe(~ ., data = new_money %>% select(-lof)) %>%
+ step_rm(income_above_50k) %>%  ## will remove variables based on their name, type, or role
+  step_naomit(everything(), skip = TRUE) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% #converts our factor columns into numeric binary (0 and 1) variables.
+  step_zv(all_numeric(), -all_outcomes()) %>% ## step_zv(): removes any numeric variables that have zero variance.
+  prep() %>% 
+  bake(new_data = NULL)
+
+# Print out data
+money_features %>% 
+  slice_head(n = 5)
+
+
+```
+```{r}
+
+set.seed(503)
+
+# Create 10 models with 1 to 10 clusters
+kclusts <- tibble(k = 1:10) %>% 
+  mutate(
+    kclust = map(k, ~kmeans(x = nm, centers = .x)),
+    glanced = map(model, glance),
+    augmented = map(kclust, augment, nm))
+
+
+kclusts = tibble(k = 1:10) %>% 
+  mutate(
+    kclust = map(k,~kmeans(income3 %>% select(-income_above_50k),.x)), 
+    glanced = map(kclust, glance), 
+    augmented = map(kclust, augment, income3) %>% select(-income_above_50k))
+  )
+
+```
+```{r}
+kclusts %>% 
+  ggplot(mapping = aes(x = k, y = tot.withinss)) +
+  geom_line(size = 1.2, alpha = 0.5, color = "forestgreen") +
+  geom_point(size = 2, color = "forestgreen")+
+  theme_minimal()
+
+#elbow at k = 3 
+```
+
+
+
+
+
+
+
