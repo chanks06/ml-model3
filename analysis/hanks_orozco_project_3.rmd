@@ -7,9 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-```
 
-```{r}
 library(tidyverse)
 library(tidytext)
 library(caret)
@@ -37,9 +35,10 @@ raw_income = raw_income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>%
 
 income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
                 rename_all(funs(tolower(.)))
-
-
 ```
+
+
+
 
 # INTRODUCTION 
 
@@ -204,7 +203,7 @@ Not a significance increase in LR model performance. We will bring along PC1 and
 
 # PART II: K-means 
 
-Major Assumptions: flnwgt does not include age information
+**Major Assumptions: flnwgt does not include age information**
 
 ```{r}
 # Drop target column and normalize data
@@ -227,6 +226,7 @@ income_features = bind_cols(prc %>% select(2:3), income_features)
 
 ## Choosing number of clusters
 
+For this exercise, we build a 
 
 ```{r}
 
@@ -250,8 +250,12 @@ kclusts %>%
   ggplot(mapping = aes(x = k, y = tot.withinss)) +
   geom_line(size = 1.2, alpha = 0.5, color = "dodgerblue3") +
   geom_point(size = 2, color = "dodgerblue3")+
-  theme_minimal()
+  theme_minimal()+
+  labs(title = "Total within-cluster sum of squares (tot.withinss)")
 ```
+If we take a look at graph above, we can notice how the total within-cluster sum of squares decreases as the number of clusters increase. Considering the elbow method, which is the point where WCSS decreases much slower after adding another cluster, the number of clusters suggested is 3 (it appears that there is a bit of an elbow or “bend” at that point).
+
+Also, the table above, shows that k=3 has the lowest tot.withinss- A smaller WithinSS (or SSW) means there is less variance in that cluster’s data.
 
 
 ## Analysis of cluster centers
@@ -261,25 +265,24 @@ set.seed(503)
 # Fit and predict clusters with k = 3
 final_kmeans <- kmeans(income_features, centers =3, nstart = 100, iter.max = 1000)
 
+final_kmeans
+
 # Add cluster prediction to the data set
-results <- augment(final_kmeans, income_features)
-
-results %>% 
-  slice_head(n = 5)
-```
-
-
-
-```{r}
-results <- bind_cols(select(income, income_above_50k), as.data.frame(results))
+results_cluster <- augment(final_kmeans, income_features)
 
 ```
+
+From the output, we see that three clusters have been found with sizes 16631, 6630, 21961. For each cluster, the squared distances between the observations to the centroids are calculated. So, each observation will be assigned to one of the three clusters. 
+
+
 
 ## Bivariate chart(s) against meaningful variables and/or analysis of density plots
 
+Now, I will visualize the scatter plot between husbands and fnlwg and color the points based on the cluster id (1, 2 or 3)
+
 ```{r}
-clust_spc_plot <- results %>% 
-    ggplot(mapping = aes(x = fnlwgt, y = husbands)) +
+clust_spc_plot <- results_cluster  %>% 
+    ggplot(mapping = aes(x = low_ed_male_laborer, y = husbands)) +
     geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
 
   scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
@@ -290,8 +293,40 @@ clust_spc_plot
 ggplotly(clust_spc_plot)
 
 ```
+```{r}
+clust_spc_plot2 <- results_cluster  %>% 
+    ggplot(mapping = aes(x = age, y = fnlwgt)) +
+    geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
+
+  scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
+
+
+clust_spc_plot2
+# Make plot interactive
+ggplotly(clust_spc_plot2)
+
+```
+
+
+```{r}
+clust_spc_plot3 <- results_cluster  %>% 
+    ggplot(mapping = aes(x = education_num, y = fnlwgt)) +
+    geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
+
+  scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
+
+
+clust_spc_plot3
+# Make plot interactive
+ggplotly(clust_spc_plot3)
+
+```
 
 ## Meaningful interpretation / discussion of conclusions
+
+We consider that k-means is not suitable for this dataset. The first plot does not show clear definition of clusters and the plot 2 and 3 shows non-spherical shape, the algorithm suggest that each points is close to each other (A to B and B to C, and so on)
+
+We suggest using an algorithm that handle non-spherical shaped data as well as other forms, such as Gaussian Mixtures Models [https://jakevdp.github.io/PythonDataScienceHandbook/05.12-gaussian-mixtures.html]
 
 
 # PART III    SUPERVISED LEARNING 
@@ -360,7 +395,7 @@ id_train <- training(data_split)
 id_test  <- testing(data_split)
 
 basic_rec <- 
-  recipe(income_above_50k ~ ., data = id_train) %>% 
+  recipe(class ~ ., data = id_train) %>% 
   step_dummy(all_nominal(), -all_outcomes()) %>%
   step_normalize(all_predictors())
 
