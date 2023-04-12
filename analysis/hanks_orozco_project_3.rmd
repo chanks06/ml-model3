@@ -1,6 +1,6 @@
 ---
-title: "KMeans"
-author: "Karol Orozco"
+title: "ML Project 3"
+author: "Karol Orozco & Charles Hanks"
 date: "2023-04-11"
 output: html_document
 ---
@@ -18,7 +18,12 @@ library(factoextra)
 library(cluster)
 library(plotly)
 library(skimr)
+library(pROC)
 
+
+```
+
+```{r}
 # https://www.openml.org/d/1590
 
 raw_income = read_csv("https://raw.githubusercontent.com/chanks06/ml-model3/main/datasets/openml_1590.csv", na=c("?"))
@@ -35,14 +40,86 @@ raw_income = raw_income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>%
 
 income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>% 
                 rename_all(funs(tolower(.)))
+options(scipen=999)
 ```
 
 
+# INTRODUCTION - MODEL PROJECT 3 
+
+* Run PCA on the dataset. How many principal components do you need to explain half the variation? 
+* Can you give some interpretation of the principal components?
+* Look at the scree plot. How many PCs would you choose based on that?
+* Are the first few Principal Components good predictors of income_above_50k?
+* How well can you predict income_above_50k using the first 5 or 6 principal components? How about only the first 2?
+* Can you gain any insights into the data based on k-means clustering? 
+* Can you visualize and interpret some or all of your clusters?
+* Using any and all techniques we have learned, build the best predictive model for income_above_50k that you can. What are your best features? What model did you use? What interpretations can you draw?
+* What metric can you use to assess model performance? Why is that a good choice of metric in this case?
+* What are some key insights you found through your analysis?
+
+###
+
+*Prediction task is to determine whether a person makes over 50k a year.* 
+
+- Data from 1994 Census database.
+- fnlwgt: demographic background of the people - people with similar demographic characteristics should have similar weights. 
+
+## Exploratory Data Analysis 
+
+Examining distibution of sex: 
+```{r}
+n_sex = raw_income %>% 
+  group_by(sex) %>% 
+    count()
+```
+
+```{r}
+raw_income %>% group_by(sex, class) %>% count() %>% mutate(prop = n/nrow(raw_income))
+#Only 3.6 % of this dataset includes women who make more than 50k. 
+```
+
+Occupation by sex: 
+```{r}
+raw_income %>% 
+  group_by(occupation,sex) %>% 
+          count() %>% 
+          ggplot(aes(x = occupation, y = n, fill = sex)) + geom_col() + coord_flip()
+
+#craft-repair, farming/fishing, executive mostly male, admin mostly female 
+#there are some ethical considerations to unpack here in building this model...
+```
+```{r}
+raw_income %>% group_by(education, workclass) %>% count() %>% ggplot(aes(x = n, y = education, fill = workclass)) + geom_col()
+```
+# Age 
+
+```{r}
+ggplot(income, aes(x = income_above_50k, y = age, fill = income_above_50k)) + geom_boxplot()
+
+income %>% group_by(income_above_50k) %>% summarize(med_age = median(age), avg_age = mean(age))
+
+ggplot(income, aes(x = age)) + geom_histogram(binwidth = 10)
 
 
-# INTRODUCTION 
 
-Changing response variable to a factor: 
+#income$age_bin = factor(income$age_bin, levels = c("teen", "20-29","30-39","40-50","50-65","65+"))
+
+#distribution of people by age bin
+#ggplot(income, aes(x = age_bin, fill = age_bin)) + geom_histogram(stat= 'count')
+#the largest age group in this dataset is 30-39
+
+#ggplot(income, aes(x = age_bin)) + geom_histogram(stat = 'count',aes(fill = income_above_50k)) + facet_wrap(~income_above_50k)
+#People in their forties are most likely to be making above 50k. 
+
+```
+```{r}
+raw_income %>% group_by(occupation, class, sex) %>% count() %>% filter(class == '>50K' ) %>% arrange(desc(n))
+```
+
+Given that this dataset is imbalanced in terms of sex, it is likely that a predictive model will select male, between 30-50 years old, in executive-managerial, prof-speciality, craft-repair, or sales.  
+
+
+## Changing response variable to a factor: 
 ```{r}
 income = income %>% mutate(income_above_50k = factor(income_above_50k)) %>% relocate(income_above_50k)
 ```
@@ -53,7 +130,7 @@ income = income %>% mutate(income_above_50k = factor(income_above_50k)) %>% relo
 
 ```{r}
 
-ggplot(income, aes(x = capital_loss)) + geom_histogram()
+#ggplot(income, aes(x = capital_loss)) + geom_histogram()
 #definition: capital gain refers to the increase in the value of a capital asset when it is sold. A capital gain occurs when you sell an asset for more than what you originally paid for it. 
 
 income = income %>% mutate(l_capital_gain = log(capital_gain), 
@@ -71,7 +148,7 @@ ggplot(income, aes(x = l_capital_gain)) + geom_histogram() + xlim(5,12)
 ggplot(income, aes(x = l_capital_loss)) + geom_histogram() + xlim(5,12)
 
 income %>% group_by(income_above_50k) %>% summarize(avg_cap_gain = mean(l_capital_gain), avg_cap_loss = mean(l_capital_loss))
-#people making above over 50k will high have greater log capital gain/loss on average  
+#people making above over 50k will have greater log capital gain/loss on average  
 ```
 
 # PART I Principal Component Analysis on Income Dataset
@@ -98,7 +175,7 @@ We need *37* principal components to explain half of the variation of the data.
 
 Looking at at the plot below, we can see a visual ranking of how much of the variation each component captures. Each component is ranked according to its Eigenvalue. The eigenvalue is a measure of the proportion of variance explain by that component. 
 
-The scree plot helps us select a cut off point for determining how we can explain the most variation with the fewest components as possible. We evaluate the slope of the line connecting the components, and find the point when the absolute value of the slope becomes small, and each component following continues that trend. The 'elbow' in the plot below is at PC2. The components after PC2 do much less for us in accounting for the variance the income dataset. 
+The scree plot helps us select a cut off point for determining how we can explain the most variation with the fewest components as possible. We evaluate the slope of the line connecting the components, and find the point when the absolute value of the slope becomes small, and each component following continues that trend. The 'elbow' in the plot below is at PC5. The components after PC5 do much less for us in accounting for the variance the income dataset. 
 
 ```{r}
 screeplot(pr_income, type = "lines")
@@ -111,9 +188,6 @@ We will look at the factor loadings for each component to determine what each co
 
 We can interpret factor loadings as coefficients of our linear combination for each feature within the principal component. They tell us the relative (transformed) value of each original feature. For example, a factor loading of -.75 for age would mean that this component contains the observations of younger people.  
 
-```{r}
-pr_income$rotation
-```
 
 ## Component Interpretation 
 
@@ -202,26 +276,29 @@ confusionMatrix(predict(fit.allpc, test),factor(test$income_above_50k))
 Not a significance increase in LR model performance. We will bring along PC1 and PC2 as guides for the rest of our journey. 
 
 # PART II: K-means 
+Code adapted from This [article](https://rpubs.com/eR_ic/clustering) on clustering
 
 **Major Assumptions: flnwgt does not include age information**
 
 ```{r}
 # Drop target column and normalize data
-income_features =  recipe(~ ., data = income) %>%
- step_rm(income_above_50k) %>%  ## will remove variables based on their name, type, or role
-  step_naomit(everything(), skip = TRUE) %>% 
-  step_dummy(all_nominal(), -all_outcomes()) %>% #converts our factor columns into numeric binary (0 and 1) variables.
-  step_zv(all_numeric(), -all_outcomes()) %>% ## step_zv(): removes any numeric variables that have zero variance.
-
-
-  prep() %>% 
-  bake(new_data = NULL)
+#income_features =  recipe(~ ., data = income) %>%
+ #step_rm(income_above_50k) %>%  ## will remove variables based on their name, type, or role
+ #step_naomit(everything(), skip = TRUE) %>% 
+  #step_dummy(all_nominal(), -all_outcomes()) %>% #converts our factor columns into numeric binary (0 and 1) variables.
+  #step_zv(all_numeric(), -all_outcomes()) %>% ## step_zv(): removes any numeric variables that have zero variance.
+  #step_normalize() %>% 
+  #prep() %>% 
+  #bake(new_data = NULL)
 
 # Print out data
-income_features %>% 
-  slice_head(n = 5)
+#income_features %>% 
+  #slice_head(n = 5)
 
-income_features = bind_cols(prc %>% select(2:3), income_features)
+income_scaled = as.data.frame(lapply(income %>% select(-income_above_50k), function(x) scale(x, center = TRUE, scale = TRUE)))
+
+
+income_features = bind_cols(prc %>% select(2:3), income_scaled)
 ```
 
 ## Choosing number of clusters
@@ -235,7 +312,7 @@ set.seed(503)
 # Create 10 models with 1 to 10 clusters
 kclusts <- tibble(k = 1:10) %>% 
   mutate(
-    model = map(k, ~ kmeans(x = income_features, centers = .x, nstart = 20)),
+    model = map(k, ~ kmeans(x = income_features, centers = .x)),
     glanced = map(model, glance)) %>% 
   unnest(cols = c(glanced))
 
@@ -248,14 +325,12 @@ kclusts
 # Plot Total within-cluster sum of squares (tot.withinss)
 kclusts %>% 
   ggplot(mapping = aes(x = k, y = tot.withinss)) +
-  geom_line(size = 1.2, alpha = 0.5, color = "dodgerblue3") +
-  geom_point(size = 2, color = "dodgerblue3")+
+  geom_line(size = 1.2, alpha = 0.5, color = "darkseagreen") +
+  geom_point(size = 2, color = "darkseagreen")+
   theme_minimal()+
   labs(title = "Total within-cluster sum of squares (tot.withinss)")
 ```
-If we take a look at graph above, we can notice how the total within-cluster sum of squares decreases as the number of clusters increase. Considering the elbow method, which is the point where WCSS decreases much slower after adding another cluster, the number of clusters suggested is 3 (it appears that there is a bit of an elbow or “bend” at that point).
-
-Also, the table above, shows that k=3 has the lowest tot.withinss- A smaller WithinSS (or SSW) means there is less variance in that cluster’s data.
+If we take a look at graph above, we can notice how the total within-cluster sum of squares decreases as the number of clusters increase. Considering the elbow method, which is the point where WCSS decreases much slower after adding another cluster, the number of clusters suggested is 7 (it appears that there is a bit of an elbow or “bend” at that point). A smaller WithinSS (or SSW) means there is less variance in that cluster’s data. 
 
 
 ## Analysis of cluster centers
@@ -263,47 +338,47 @@ Also, the table above, shows that k=3 has the lowest tot.withinss- A smaller Wit
 ```{r}
 set.seed(503)
 # Fit and predict clusters with k = 3
-final_kmeans <- kmeans(income_features, centers =3, nstart = 100, iter.max = 1000)
+final_kmeans <- kmeans(income_features, centers = 7, nstart = 100, iter.max = 1000)
 
 final_kmeans
 
-# Add cluster prediction to the data set
+# Adding cluster to the data set
 results_cluster <- augment(final_kmeans, income_features)
+
+results_cluster %>% group_by(.cluster) %>% count()
 
 ```
 
-From the output, we see that three clusters have been found with sizes 16631, 6630, 21961. For each cluster, the squared distances between the observations to the centroids are calculated. So, each observation will be assigned to one of the three clusters. 
-
+From the output, we see that three clusters have been found. For each cluster, the squared distances between the observations to the centroids are calculated. So, each observation will be assigned to one of the five clusters. 
 
 
 ## Bivariate chart(s) against meaningful variables and/or analysis of density plots
 
-Now, I will visualize the scatter plot between husbands and fnlwg and color the points based on the cluster id (1, 2 or 3)
+Now, I will visualize the scatter plot between husbands and fnlwgt and color the points based on the cluster id:
 
 ```{r}
 clust_spc_plot <- results_cluster  %>% 
     ggplot(mapping = aes(x = low_ed_male_laborer, y = husbands)) +
     geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
 
-  scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
+  scale_color_manual(values = c("darkslateblue","goldenrod","deeppink", "green", "red", "yellow", "skyblue"))+ theme_minimal()
 
 
 clust_spc_plot
-# Make plot interactive
-ggplotly(clust_spc_plot)
+
 
 ```
+
 ```{r}
 clust_spc_plot2 <- results_cluster  %>% 
-    ggplot(mapping = aes(x = age, y = fnlwgt)) +
+    ggplot(mapping = aes(x = age, y = education_num)) +
     geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
 
-  scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
+  scale_color_manual(values = c("darkslateblue","goldenrod","deeppink", "green", "red", "yellow", "skyblue"))+ theme_minimal()
 
 
 clust_spc_plot2
-# Make plot interactive
-ggplotly(clust_spc_plot2)
+
 
 ```
 
@@ -313,28 +388,57 @@ clust_spc_plot3 <- results_cluster  %>%
     ggplot(mapping = aes(x = education_num, y = fnlwgt)) +
     geom_point(aes(shape = .cluster, color= .cluster),size = 2,alpha=0.3)+ 
 
-  scale_color_manual(values = c("darkorange","purple","cyan4"))+ theme_minimal()
+  scale_color_manual(values = c("darkslateblue","goldenrod","deeppink", "green", "red", "yellow", "skyblue"))+ theme_minimal()
 
 
 clust_spc_plot3
-# Make plot interactive
-ggplotly(clust_spc_plot3)
 
+
+```
+
+Looking at clusters in terms of PC1 and PC2, we see good distinct among the clusters. 
+```{r}
+results_cluster %>%
+pivot_longer(c(husbands, low_ed_male_laborer),names_to = "feature") %>%
+ggplot(aes(value, fill=.cluster))+
+geom_density(alpha=0.3)+
+facet_wrap(~feature)
+```
+level of education, hours per week worked
+```{r}
+results_cluster %>%
+pivot_longer(c(age, hours_per_week),names_to = "feature") %>%
+ggplot(aes(value, fill=.cluster))+
+geom_density(alpha=0.3)+
+facet_wrap(~feature)
 ```
 
 ## Meaningful interpretation / discussion of conclusions
 
-We consider that k-means is not suitable for this dataset. The first plot does not show clear definition of clusters and the plot 2 and 3 shows non-spherical shape, the algorithm suggest that each points is close to each other (A to B and B to C, and so on)
+We think that k-means is not suitable for this dataset. Some of these plots do not show clear definition of clusters and the plot clust_spc_plot shows non-spherical shape, the algorithm suggests that each point is close to each other (A to B and B to C, and so on). 
+Analyzing the ratio between_SS / total_SS, we see that the differences between clusters explain 14.7% of the total variation in the dataset.
+
+A negative value of between_SS is mathematically possible, but it can occur only in certain circumstances. Specifically, negative values of between_SS can occur when the clusters are too small and the variance within the clusters is greater than the variance between the clusters. In such cases, the total sum of squares can be smaller than the sum of squares due to the between-cluster differences, resulting in a negative value for between_SS.
+
+However, negative values of between_SS are generally uncommon and may indicate issues with the cluster analysis, such as inappropriate choice of clustering algorithm or incorrect data preprocessing. It's important to investigate the reasons behind the negative value and to ensure that the results of the analysis are valid and reliable.
 
 We suggest using an algorithm that handle non-spherical shaped data as well as other forms, such as Gaussian Mixtures Models [https://jakevdp.github.io/PythonDataScienceHandbook/05.12-gaussian-mixtures.html]
+
+Nevertheless, we will add our cluster column to our dataset to see if it helps our predictive modeling. 
+```{r}
+# adding PC1 and PC2 to ds 
+income = bind_cols(prc %>% select(2:3), income) %>% relocate(income_above_50k)
+# adding clusters 
+income = bind_cols(income, results_cluster[107])
+income = income %>% rename("cluster" = .cluster)
+```
 
 
 # PART III    SUPERVISED LEARNING 
 
 Logistic Regression Model to examine log-odds of each feature
 ```{r}
-#adding pc1 and pc2 to income ds 
-income = bind_cols(prc %>% select(2:3), income) %>% relocate(income_above_50k)
+income = income %>% mutate(income_above_50k = factor(ifelse(income_above_50k == 'TRUE','yes','no'), levels = c('yes','no')))
 
 income_index <- createDataPartition(income$income_above_50k, p = 0.80, list = FALSE)
 train <- income[income_index, ]
@@ -342,92 +446,207 @@ test <- income[-income_index, ]
 
 control <- trainControl(method = "cv", number = 5)
 
-fit.lr <- train(income_above_50k ~ .,
-             data = train, 
+# fit.lr <- train(income_above_50k ~ .,
+             data = train,
              trControl = control,
-             method = "glm",
+             # method = "glm",
              family = "binomial")
 
 
 odds_ratio = exp(coef(fit.lr$finalModel))
 data.frame(name = names(odds_ratio), odds_ratio = odds_ratio) %>%
-arrange(desc(odds_ratio)) %>%
-head()
+arrange(desc(odds_ratio))
 
 view(odds_ratio)
 
+confusionMatrix(predict(fit.lr, test),factor(test$income_above_50k))
+
+myRoc <- roc(test$income_above_50k, predict(fit.lr, test, type="prob")[,2])
+
+plot(myRoc, main = 'AUC = .89')
+auc(myRoc)
 
 ```
+PC1, education, and marital status are meaningful variables in predicting income level.  
 
-
-Feature Engineering 
-
+## Feature Engineering
 ```{r}
-raw_income = raw_income %>% drop_na()
 
-rawr = bind_cols(prc %>% select(2:3), raw_income) %>% relocate(class)
-
-rawr = rawr %>% mutate(l_capital_gain = log(capital_gain), 
-                  l_capital_loss = log(capital_loss), 
-                  class = factor(class)) %>% 
-                        select(-capital_gain,-capital_loss) %>% relocate(class)
-
-
-rawr = rawr %>% mutate(l_capital_gain = ifelse(l_capital_gain == -Inf, 0, l_capital_gain),
-                  l_capital_loss = ifelse(l_capital_loss == -Inf, 0, l_capital_loss))
-
-rawr %>% mutate(age_bin = (case_when( 
+age_dummies = income %>% mutate(age_bin = case_when( 
                       age < 20 ~ "teen", 
                       age >=20 & age <30 ~ "20-29",
                       age >=30 & age <40 ~ "30-39", 
                       age >=40 & age <50 ~ "40-50",
                       age >=50 & age <66 ~ "50-65",
-                      age >=65  ~ "65+")))
+                      age >=65  ~ "65+")) %>% select(age_bin) %>%  dummy_cols(remove_selected_columns = T)
 
-rawr = rawr %>% mutate(overtime = ifelse(hours_per_week > 40, 1, 0))
+#people who work over 40 hours a week will get overtime pay if an hourly worker. 
+income = bind_cols(income, age_dummies) %>% mutate(overtime = as.numeric(ifelse(hours_per_week > 40, 1, 0)))
+
 ```
 
-## TidyModel 
+## Gradient Boosted Model 
 
 ```{r}
-data_split <- initial_split(rawr, prop = 3/4)
-id_train <- training(data_split)
-id_test  <- testing(data_split)
+ #resplitting after addition of new features: 
+income_index <- createDataPartition(income$income_above_50k, p = 0.80, list = FALSE)
+train <- income[income_index, ]
+test <- income[-income_index, ]
+# # 
+# # #checking for variables with 0 variance 
+# # #vzv_vals = nearZeroVar(income, saveMetrics = TRUE)
 
-basic_rec <- 
-  recipe(class ~ ., data = id_train) %>% 
-  step_dummy(all_nominal(), -all_outcomes()) %>%
-  step_normalize(all_predictors())
 
-lr_mod = logistic_reg() %>% 
-  set_engine("glm")
+ctrl <- trainControl(method = "cv", number = 3, classProbs=TRUE, summaryFunction = twoClassSummary)
 
-rf_spec <- 
-   rand_forest(mtry = tune(), min_n = tune(), trees = 100) %>% 
-   set_engine("randomForest") %>% 
-   set_mode("classification")
+fit.gbm <- train(income_above_50k ~ .,
+             data = train,
+             method = "gbm",
+             tuneLength = 4,
+             preProcess = c("center","scale"),
+             metric = "ROC",
+             trControl = ctrl)
 
-dt_spec <- 
-  decision_tree(
-    cost_complexity = tune(),
-    tree_depth = tune()
-  ) %>% 
-  set_engine("rpart") %>% 
-  set_mode("classification")
 
-xgb_spec <- 
-   boost_tree(tree_depth = tune(), learn_rate = tune(), loss_reduction = tune(), 
-              min_n = tune(), sample_size = tune(), trees = tune()) %>% 
-   set_engine("xgboost") %>% 
-   set_mode("classification")
+confusionMatrix(predict(fit.gbm, test),factor(test$churn))
+
+myRoc <- roc(test$income_above_50k, predict(fit.gbm, test, type="prob")[,2])
+
+plot(myRoc)
+auc(myRoc)
+```
+
+The results from the training above tells that we could further tune parameters for performance:
+
+```{r}
+ grid.gbm = expand.grid(interaction.depth = seq(4,8,1),
+                       n.trees = seq(200,400,50),
+                        shrinkage = 0.1, 
+                        n.minobsinnode = 10)
+
+fit.gbm.2 <- train(income_above_50k ~ .,
+             data = train,
+             method = "gbm",
+             tuneGrid = grid.gbm,
+             preProcess = c("center","scale"),
+             metric = "ROC",
+             trControl = ctrl)
+
+confusionMatrix(predict(fit.gbm.2, test),factor(test$income_above_50k))
+#kappa - .60
+
+
+myRoc <- roc(test$income_above_50k, predict(fit.gbm.2, test, type="prob")[,2])
+
+plot(myRoc, main = "AUC = .92")
+auc(myRoc)
+
+#AUC = .92
+
+print(fit.gbm.2$bestTune)
+```
+## Downsampling training data to remove imbalance of income_above_50k: 
+
+```{r}
+income_index <- createDataPartition(income$income_above_50k, p = 0.80, list = FALSE)
+train <- income[income_index, ]
+test <- income[-income_index, ]
+
+traindown = downSample(x = train[,-1], y= train$income_above_50k) %>% mutate(income_above_50k = Class) %>% select(-Class)
+
+traindown %>% group_by(income_above_50k) %>% count()
+
+fit.gbm.3 <- train(income_above_50k ~ .,
+             data = traindown,
+             method = "gbm",
+             tuneGrid = fit.gbm.2$bestTune,
+             preProcess = c("center","scale"),
+             metric = "ROC",
+             trControl = ctrl)
+
+#checking performance of downsampled training on test data
+confusionMatrix(predict(fit.gbm.3, test),factor(test$income_above_50k))
+
+myRoc <- roc(test$income_above_50k, predict(fit.gbm.3, test, type="prob")[,2])
+
+plot(myRoc)
+auc(myRoc)
+#AUV = 0.917
 
 ```
 
+Conclusion: the difference between the two training sets is negligible. 
+
+Given the relative success of a gradient boosted, let's try XG Boost: 
+```{r}
+
+grid.xgb=expand.grid(nrounds=50, #number of trees in final model
+                     eta=c(.1,.3,.7), # our shrinkage parameter
+                     max_depth=seq(4,8,1),
+                     gamma = 0,
+                     min_child_weight = 1,
+                     subsample = 1,
+                     colsample_bytree = 1)
+
+fit.xgb <- train(income_above_50k ~ .,
+             data = train,
+             method = "xgbTree",
+             tuneGrid = grid.xgb,
+             verbose=FALSE,
+             trControl = ctrl)
+
+confusionMatrix(predict(fit.xgb, test),factor(test$income_above_50k))
+
+myRoc <- roc(test$income_above_50k, predict(fit.xgb, test, type="prob")[,2])
+
+plot(myRoc)
+auc(myRoc) #0.926
+
+fit.xgb$bestTune
+
+```
+## Upsampling training data to equalizes classes:  
+Note that we are not touching the test data!
+```{r}
+set.seed(1001)
+income_index <- createDataPartition(income$income_above_50k, p = 0.80, list = FALSE)
+train <- income[income_index, ]
+test <- income[-income_index, ]
+
+train_up = upSample(x = train[,-1], y= train$income_above_50k) %>% mutate(income_above_50k = Class) %>% select(-Class)
+
+fit.xgb.tu.2 <- train(income_above_50k ~ .,
+             data = train_up,
+             method = "xgbTree",
+             tuneGrid = fit.xgb$bestTune,
+             preProcess = c("center","scale"),
+             metric = "ROC",
+             verbose=FALSE,
+             trControl = ctrl)
+
+confusionMatrix(predict(fit.xgb.tu.2, test),factor(test$income_above_50k))
+
+myRoc <- roc(test$income_above_50k, predict(fit.xgb.tu.2, test, type="prob")[,2])
+
+plot(myRoc)
+auc(myRoc)
 
 
+```
 
+## Choice of Metric: 
 
+We chose ROC/AUC as our metric to determine model performance because this is a binary classification problem. Given that there are 3x more negative (<50K) observations, our priority was improving the true positive (sensitivity) rate of our model. We can most easily interpret our TP rate in terms of the ROC/AUC metric. The ROC curve is helpful in showing us our TP vs FP at many different cut offs (decision threshold) for classification. 
 
+## Conlusion:
+
+Applying PCA helped us find a signal in an otherise noisy dataset. K-means unsupervised learning did not meaningfully assist us to make predictions. We were able to improve the amount of true positives in validating our model as a result of training on an a balanced training dataset. 
+
+## Sources: 
+
+[Extreme Gradient Boosting](https://amirali-n.github.io/ExtremeGradientBoosting/)
+[Clustering in TidyModels](https://rpubs.com/eR_ic/clustering)
+[Parameter Tuning in Caret](https://topepo.github.io/caret/model-training-and-tuning.html)
 
 
 
