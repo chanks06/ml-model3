@@ -1,9 +1,15 @@
 ---
-title: "ML Project 3"
+title: "Unsupervised and Supervised Machine Learning: "
 author: "Karol Orozco & Charles Hanks"
 date: "2023-04-11"
 output: html_document
 ---
+
+# INTRODUCTION - MODEL PROJECT 3 
+
+*Prediction task is to determine whether a person makes over 50k a year.* 
+
+Applying principal component analysis, k-means, and a gradient boosting model using data from the 1994 Census. 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -43,27 +49,6 @@ income = income %>% rename_all(funs(str_replace_all(.,"-","_"))) %>%
 options(scipen=999)
 ```
 
-
-# INTRODUCTION - MODEL PROJECT 3 
-
-* Run PCA on the dataset. How many principal components do you need to explain half the variation? 
-* Can you give some interpretation of the principal components?
-* Look at the scree plot. How many PCs would you choose based on that?
-* Are the first few Principal Components good predictors of income_above_50k?
-* How well can you predict income_above_50k using the first 5 or 6 principal components? How about only the first 2?
-* Can you gain any insights into the data based on k-means clustering? 
-* Can you visualize and interpret some or all of your clusters?
-* Using any and all techniques we have learned, build the best predictive model for income_above_50k that you can. What are your best features? What model did you use? What interpretations can you draw?
-* What metric can you use to assess model performance? Why is that a good choice of metric in this case?
-* What are some key insights you found through your analysis?
-
-###
-
-*Prediction task is to determine whether a person makes over 50k a year.* 
-
-- Data from 1994 Census database.
-- fnlwgt: demographic background of the people - people with similar demographic characteristics should have similar weights. 
-
 ## Exploratory Data Analysis 
 
 Examining distibution of sex: 
@@ -76,6 +61,7 @@ n_sex = raw_income %>%
 ```{r}
 raw_income %>% group_by(sex, class) %>% count() %>% mutate(prop = n/nrow(raw_income))
 #Only 3.6 % of this dataset includes women who make more than 50k. 
+#may want to equalize these classes by upsampling/downsampling 
 ```
 
 Occupation by sex: 
@@ -163,9 +149,7 @@ In practice, this allows us to use only a handful of principal components to exp
 
 ```{r}
 pr_income = prcomp(x = select(income,-income_above_50k), scale = T, center = T)
-
-summary(pr_income)
-pr_income$rotation
+summary(pr_income) 
 
 ```
 
@@ -281,32 +265,17 @@ Code adapted from This [article](https://rpubs.com/eR_ic/clustering) on clusteri
 **Major Assumptions: flnwgt does not include age information**
 
 ```{r}
-# Drop target column and normalize data
-#income_features =  recipe(~ ., data = income) %>%
- #step_rm(income_above_50k) %>%  ## will remove variables based on their name, type, or role
- #step_naomit(everything(), skip = TRUE) %>% 
-  #step_dummy(all_nominal(), -all_outcomes()) %>% #converts our factor columns into numeric binary (0 and 1) variables.
-  #step_zv(all_numeric(), -all_outcomes()) %>% ## step_zv(): removes any numeric variables that have zero variance.
-  #step_normalize() %>% 
-  #prep() %>% 
-  #bake(new_data = NULL)
-
-# Print out data
-#income_features %>% 
-  #slice_head(n = 5)
-
+#scaling all cols: 
 income_scaled = as.data.frame(lapply(income %>% select(-income_above_50k), function(x) scale(x, center = TRUE, scale = TRUE)))
 
-
+#adding PC1 and PC2
 income_features = bind_cols(prc %>% select(2:3), income_scaled)
 ```
 
 ## Choosing number of clusters
 
-For this exercise, we build a 
 
 ```{r}
-
 set.seed(503)
 
 # Create 10 models with 1 to 10 clusters
@@ -404,7 +373,7 @@ ggplot(aes(value, fill=.cluster))+
 geom_density(alpha=0.3)+
 facet_wrap(~feature)
 ```
-level of education, hours per week worked
+
 ```{r}
 results_cluster %>%
 pivot_longer(c(age, hours_per_week),names_to = "feature") %>%
@@ -446,18 +415,16 @@ test <- income[-income_index, ]
 
 control <- trainControl(method = "cv", number = 5)
 
-# fit.lr <- train(income_above_50k ~ .,
+fit.lr <- train(income_above_50k ~ .,
              data = train,
              trControl = control,
-             # method = "glm",
+             method = "glm",
              family = "binomial")
 
 
 odds_ratio = exp(coef(fit.lr$finalModel))
 data.frame(name = names(odds_ratio), odds_ratio = odds_ratio) %>%
 arrange(desc(odds_ratio))
-
-view(odds_ratio)
 
 confusionMatrix(predict(fit.lr, test),factor(test$income_above_50k))
 
@@ -492,9 +459,6 @@ income = bind_cols(income, age_dummies) %>% mutate(overtime = as.numeric(ifelse(
 income_index <- createDataPartition(income$income_above_50k, p = 0.80, list = FALSE)
 train <- income[income_index, ]
 test <- income[-income_index, ]
-# # 
-# # #checking for variables with 0 variance 
-# # #vzv_vals = nearZeroVar(income, saveMetrics = TRUE)
 
 
 ctrl <- trainControl(method = "cv", number = 3, classProbs=TRUE, summaryFunction = twoClassSummary)
@@ -508,7 +472,7 @@ fit.gbm <- train(income_above_50k ~ .,
              trControl = ctrl)
 
 
-confusionMatrix(predict(fit.gbm, test),factor(test$churn))
+confusionMatrix(predict(fit.gbm, test),factor(test$income_above_50k))
 
 myRoc <- roc(test$income_above_50k, predict(fit.gbm, test, type="prob")[,2])
 
@@ -519,9 +483,9 @@ auc(myRoc)
 The results from the training above tells that we could further tune parameters for performance:
 
 ```{r}
- grid.gbm = expand.grid(interaction.depth = seq(4,8,1),
-                       n.trees = seq(200,400,50),
-                        shrinkage = 0.1, 
+grid.gbm = expand.grid(interaction.depth = seq(4,8,1),
+                      n.trees = seq(200,400,50),
+                       shrinkage = 0.1, 
                         n.minobsinnode = 10)
 
 fit.gbm.2 <- train(income_above_50k ~ .,
@@ -584,8 +548,8 @@ grid.xgb=expand.grid(nrounds=50, #number of trees in final model
                      eta=c(.1,.3,.7), # our shrinkage parameter
                      max_depth=seq(4,8,1),
                      gamma = 0,
-                     min_child_weight = 1,
-                     subsample = 1,
+                    min_child_weight = 1,
+                    subsample = 1,
                      colsample_bytree = 1)
 
 fit.xgb <- train(income_above_50k ~ .,
@@ -619,7 +583,7 @@ fit.xgb.tu.2 <- train(income_above_50k ~ .,
              data = train_up,
              method = "xgbTree",
              tuneGrid = fit.xgb$bestTune,
-             preProcess = c("center","scale"),
+            preProcess = c("center","scale"),
              metric = "ROC",
              verbose=FALSE,
              trControl = ctrl)
@@ -640,7 +604,7 @@ We chose ROC/AUC as our metric to determine model performance because this is a 
 
 ## Conlusion:
 
-Applying PCA helped us find a signal in an otherise noisy dataset. K-means unsupervised learning did not meaningfully assist us to make predictions. We were able to improve the amount of true positives in validating our model as a result of training on an a balanced training dataset. 
+Applying PCA helped us find a signal in an otherwise noisy dataset. K-means unsupervised learning did not meaningfully assist us to make predictions. We were able to improve the amount of true positives in validating our model as a result of training on an a balanced training dataset. 
 
 ## Sources: 
 
